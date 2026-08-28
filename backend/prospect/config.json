@@ -1,0 +1,47 @@
+{
+  "port": 8025,
+  "county": "Miami-Dade",
+  "roll_year": 2026,
+  "roll_type": "preliminary",
+
+  "milestone_age_years": 30,
+  "_milestone_note": "FS 553.899 milestone inspection trigger. Uniform 30 years after the 2024 amendment (was 25 for buildings within 3 miles of the coast under SB-4D). verify against current statute text before relying on it in a deal.",
+
+  "score_weights": {
+    "age": 0.25,
+    "scale": 0.20,
+    "concentration": 0.35,
+    "absentee": 0.20
+  },
+  "_weights_note": "concentration is weighted highest because a bulk owner above ~20% means someone is already assembling the building -- the strongest single signal in the screen. Tune here and re-run build_targets.py; nothing else needs to change.",
+
+  "scale_curve": { "min_units": 10, "max_units": 400 },
+  "age_curve": { "min_years": 15, "max_years": 60 },
+  "concentration_curve": { "full_score_pct": 50 },
+
+  "shortlist": {
+    "min_units": 50,
+    "min_age_years": 30,
+    "_note": "the stage-2 declaration pull is expensive, so it only runs on rows passing this gate plus a score cutoff"
+  },
+
+  "market": {
+    "min_population": 75000,
+    "home_cbsa": "33100",
+    "_home_note": "Miami-Fort Lauderdale-West Palm Beach. The default view, not a limit — all 469 scored markets are national and selectable.",
+    "weights": {
+      "demand": 0.35,
+      "income": 0.25,
+      "afford": 0.20,
+      "jobs": 0.20
+    },
+    "_weights_note": "Driver weights. The overall score is 65% drivers + 35% headroom; headroom is what separates an EARLY market from a merely good one, since supply response and price run-up are what a developer arrives too late for."
+  },
+
+  "memo": {
+    "firm": "",
+    "confidentiality": "Confidential — for the recipient's evaluation only. Not an offer to sell securities.",
+    "comps_radius_mi": 2.0,
+    "_note": "Offering memoranda are generated per condo target from data this app already holds: the scored target row, the unit-level tax roll and its recorded sales, the zoning envelope, and the metro screener. Set \"firm\" to put a name on the cover; leave it empty for an unbranded document."
+  }
+}

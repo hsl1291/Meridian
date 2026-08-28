@@ -1,0 +1,17 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.claude/
+logs/
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/*.geojson
+data/*.pmtiles
+data/zori_rents.json
+data/zcta_pop.json
+data/memos/
+node_modules/
+.DS_Store

@@ -1,0 +1,557 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+  <title>Groundwork</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230f766e'/%3E%3Cpath d='M6 21 L13 12 L18 18 L22 13 L26 21 Z' fill='%23fff'/%3E%3Ccircle cx='23' cy='9' r='2.6' fill='%235eead4'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+  <link rel="stylesheet" href="styles.css?v=65" />
+  <link rel="stylesheet" href="shell.css?v=2" />
+</head>
+<body>
+
+<!-- ══ top bar ══════════════════════════════════════════════════════════ -->
+<header id="topbar">
+  <div class="brand">
+    <svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true">
+      <rect width="32" height="32" rx="7" fill="#0f766e"/>
+      <path d="M6 21 L13 12 L18 18 L22 13 L26 21 Z" fill="#fff"/>
+      <circle cx="23" cy="9" r="2.6" fill="#5eead4"/>
+    </svg>
+    <span>Groundwork</span>
+  </div>
+
+  <nav id="modes" role="tablist">
+    <button class="mode-btn active" data-mode="map" role="tab">Map</button>
+    <button class="mode-btn" data-mode="records" role="tab">Condo takeovers</button>
+    <button class="mode-btn" data-mode="markets" role="tab">Markets</button>
+    <button class="mode-btn" data-mode="reference" role="tab">Reference</button>
+  </nav>
+
+  <div class="top-right">
+    <div id="search-section">
+      <div class="search-box">
+        <svg class="icon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+          <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.5-4.5"/>
+        </svg>
+        <input type="text" id="search-input" placeholder="Address or folio" autocomplete="off" />
+        <button id="search-clear" type="button" aria-label="Clear" hidden>&times;</button>
+      </div>
+      <div id="search-results" hidden></div>
+    </div>
+    <select id="pick-state" aria-label="State" title="Jump to a state"><option value="">State</option></select>
+    <select id="pick-city" aria-label="City" title="Jump to a city" disabled><option value="">City</option></select>
+    <span class="county" id="place-badge">Nationwide</span>
+  </div>
+</header>
+
+<div id="shell">
+
+  <!-- ══ map-mode sidebar ═══════════════════════════════════════════════ -->
+  <aside id="sidebar">
+
+    <section class="parcel-quickinfo" id="quick-info" hidden></section>
+
+    <section id="parcel-info">
+      <h2>Selection</h2>
+      <div id="parcel-body" class="empty">Click any parcel for owner, value, zoning, flood and permits.</div>
+    </section>
+
+    <details class="layer-panel" id="dev-panel" open hidden>
+      <summary>What can be built</summary>
+      <div class="layer-group" id="dev-body"></div>
+    </details>
+
+    <details class="layer-panel" id="pa-detail-panel" hidden>
+      <summary>Property Appraiser record</summary>
+      <div class="layer-group" id="pa-detail-body"></div>
+    </details>
+
+    <details class="layer-panel" id="condo-panel" open hidden>
+      <summary>Condo units <span id="condo-unit-count" class="count-pill">0</span></summary>
+      <div class="layer-group" id="condo-body"></div>
+    </details>
+
+    <details class="layer-panel" id="permits-panel" hidden>
+      <summary>Building permits</summary>
+      <div class="layer-group" id="permits-body"></div>
+    </details>
+
+    <details class="layer-panel" id="entity-panel" hidden>
+      <summary>Owner entity</summary>
+      <div class="layer-group" id="entity-body"></div>
+    </details>
+
+    <details class="layer-panel" id="ll-panel" hidden>
+      <summary>Live Local Act <span class="hint" title="Screening estimate only, not the SB 102 entitlement. Florida's Live Local Act can let a qualifying project (40%+ of units affordable at 120% AMI or below, for 30 years) build to the greater of the highest height allowed within 1 mile, or 150% of the tallest existing building within 1 mile — with airport, military and historic carve-outs. This scans nearby maximum zoned height only. Confirm eligibility and caps with counsel.">?</span></summary>
+      <div class="layer-group">
+        <button class="primary-btn" id="ll-run" disabled>Run on selected parcel</button>
+        <div id="ll-result" hidden></div>
+      </div>
+    </details>
+
+    <details class="layer-panel" id="party-panel">
+      <summary>Owner search <span class="hint" title="Finds every parcel a name owns and every entity it is an officer or registered agent of (Florida — Sunbiz plus property records). Click a result to pivot to it.">?</span></summary>
+      <div class="layer-group">
+        <div class="search-box">
+          <svg class="icon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+            <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.5-4.5"/>
+          </svg>
+          <input type="text" id="party-input" placeholder="Owner, LLC or person" autocomplete="off" />
+        </div>
+        <div id="party-body"></div>
+      </div>
+    </details>
+
+    <details class="layer-panel" open>
+      <summary>Layers</summary>
+
+      <div class="layer-group">
+        <div class="seg" id="basemap-seg">
+          <button class="seg-btn" data-basemap="voyager">Streets</button>
+          <button class="seg-btn" data-basemap="satellite">Satellite</button>
+          <button class="seg-btn active" data-basemap="light">Light</button>
+        </div>
+      </div>
+
+      <div class="layer-group">
+        <h3>Anywhere</h3>
+
+        <label><input type="checkbox" id="lyr-parcels" checked /> <span>Parcel lines</span>
+          <span class="hint" title="Parcel boundaries for everything in view, from zoom 15 in.">?</span></label>
+        <div id="parcels-note" class="mini-note" hidden></div>
+
+        <label><input type="checkbox" id="lyr-flood" /> <span>Flood</span>
+          <span class="hint" title="FEMA National Flood Hazard Layer, nationwide.">?</span></label>
+        <label class="sub-toggle"><input type="checkbox" id="lyr-flood-sfha" /> <span>High-risk only</span></label>
+        <div id="flood-note" class="mini-note" hidden></div>
+
+        <label><input type="checkbox" id="lyr-metro-zoning" /> <span>Zoning</span>
+          <span class="hint" title="Live municipal zoning polygons, coloured by use, for every wired city. Loads as you pan from about zoom 13.">?</span></label>
+        <div id="metro-zoning-note" class="mini-note" hidden></div>
+
+        <label><input type="checkbox" id="lyr-rents" /> <span>Rents</span>
+          <span class="hint" title="Zillow ZORI is the typical market asking rent by ZIP. HUD Fair Market Rent is the 40th-percentile ceiling that voucher and LIHTC underwriting uses, published by FMR area. The gap between them is the affordable spread.">?</span></label>
+        <div id="rents-controls" class="pop-controls" hidden>
+          <div class="seg seg-sm">
+            <label class="seg-radio"><input type="radio" name="rent-src" value="zori" checked /> <span>Zillow</span></label>
+            <label class="seg-radio"><input type="radio" name="rent-src" value="fmr" /> <span>HUD</span></label>
+          </div>
+          <div class="pop-slider-row" id="rent-beds-row" hidden>
+            <span>Bedrooms</span>
+            <select id="rent-beds">
+              <option value="0">Studio</option>
+              <option value="1">1</option>
+              <option value="2" selected>2</option>
+              <option value="3">3</option>
+              <option value="4">4</option>
+            </select>
+          </div>
+        </div>
+        <div id="rents-legend" class="mini-legend" hidden></div>
+        <div id="rents-note" class="mini-note" hidden></div>
+
+        <label><input type="checkbox" id="lyr-trends" /> <span>Market trends</span>
+          <span class="hint" title="Every US metro shaded by one indicator — population growth, migration, income, rents, permitting, prices, affordability, or a composite. Shading is by national percentile, so colours mean the same thing whichever indicator you pick. Zoom out past a metro to see it.">?</span></label>
+        <div id="trends-controls" class="pop-controls" hidden>
+          <select id="trends-metric" aria-label="Indicator"></select>
+          <div id="trends-about" class="mini-note trends-about"></div>
+        </div>
+        <div id="trends-legend" class="mini-legend trends-legend" hidden></div>
+        <div id="trends-note" class="mini-note" hidden></div>
+
+        <label><input type="checkbox" id="lyr-pop-growth" /> <span>Population</span>
+          <span class="hint" title="Percentage change in population by ZIP between the two years you pick. Census ACS 5-year, 2012 to 2023.">?</span></label>
+        <div id="pop-growth-controls" class="pop-controls" hidden>
+          <div class="pop-slider-row"><span>From</span> <input type="range" id="pop-year-a" min="0" max="11" value="0" /> <b id="pop-year-a-lbl"></b></div>
+          <div class="pop-slider-row"><span>To</span> <input type="range" id="pop-year-b" min="0" max="11" value="11" /> <b id="pop-year-b-lbl"></b></div>
+        </div>
+        <div id="pop-growth-legend" class="mini-legend" hidden>
+          <span><i style="background:#762a83"></i>−10%+</span>
+          <span><i style="background:#e7d4e8"></i>Slight loss</span>
+          <span><i style="background:#f7f7f7;border:1px solid #cbd5e1"></i>Flat</span>
+          <span><i style="background:#7fbf7b"></i>Growing</span>
+          <span><i style="background:#00441b"></i>+30%+</span>
+        </div>
+        <div id="pop-growth-note" class="mini-note" hidden></div>
+
+        <label><input type="checkbox" id="lyr-permit-heat" /> <span>New construction</span>
+          <span class="hint" title="Building-permit heat, weighted by the size of what is being built.">?</span></label>
+        <div id="permit-heat-controls" class="pop-controls" hidden>
+          <label class="sub-toggle"><input type="checkbox" id="permit-heat-sfr" /> <span>Include single-family</span></label>
+        </div>
+        <div id="permit-heat-note" class="mini-note" hidden></div>
+
+        <label><input type="checkbox" id="lyr-transit-routes" /> <span>Transit</span>
+          <span class="hint" title="BTS National Transit Map routes and stops, coloured by mode.">?</span></label>
+        <div id="transit-legend" class="mini-legend" hidden>
+          <span><i style="background:#dc2626"></i>Subway</span>
+          <span><i style="background:#7c3aed"></i>Commuter</span>
+          <span><i style="background:#16a34a"></i>Tram</span>
+          <span><i style="background:#2563eb"></i>Bus</span>
+          <span><i style="background:#0891b2"></i>Ferry</span>
+        </div>
+        <div id="transit-modes" hidden>
+          <label class="sub-toggle"><input type="checkbox" id="tmode-rail" checked /> <span>Rail</span></label>
+          <label class="sub-toggle"><input type="checkbox" id="tmode-bus" checked /> <span>Bus</span></label>
+          <label class="sub-toggle"><input type="checkbox" id="tmode-ferry" checked /> <span>Ferry</span></label>
+        </div>
+        <div id="transit-note" class="mini-note" hidden></div>
+
+        <label><input type="checkbox" id="lyr-factories" /> <span>Modular plants</span>
+          <span class="hint" title="Modular, HUD-code, volumetric-multifamily, panelized and ADU factories, coloured by category.">?</span>
+          <span class="count-pill" id="factories-count">300+</span></label>
+        <div id="factory-legend" class="mini-legend" hidden>
+          <span><i style="background:#dc2626"></i>Volumetric</span>
+          <span><i style="background:#ea580c"></i>Modular</span>
+          <span><i style="background:#f59e0b"></i>HUD-code</span>
+          <span><i style="background:#7c3aed"></i>Panelized</span>
+          <span><i style="background:#0891b2"></i>ADU</span>
+        </div>
+
+        <label><input type="checkbox" id="lyr-zoning-cities" checked /> <span>Data coverage</span>
+          <span class="hint" title="Markets with data wired in. Dot size is how many datasets that market carries.">?</span>
+          <span class="count-pill" id="markets-count">100+</span></label>
+        <div id="markets-legend" class="mini-legend">
+          <span><i style="background:#5eead4"></i>1–2</span>
+          <span><i style="background:#14b8a6"></i>3–4</span>
+          <span><i style="background:#0f766e"></i>5–6</span>
+          <span><i style="background:#b45309"></i>7+</span>
+        </div>
+      </div>
+
+      <div class="layer-group" data-fl-only>
+        <h3>South Florida</h3>
+        <label><input type="checkbox" id="lyr-mdc-zoning" checked /> <span>Miami-Dade zoning</span></label>
+        <label><input type="checkbox" id="lyr-mdc-flu" /> <span>Miami-Dade future land use</span></label>
+        <label><input type="checkbox" id="lyr-bro-zoning" /> <span>Broward zoning</span></label>
+        <label><input type="checkbox" id="lyr-bro-flu" /> <span>Broward future land use</span></label>
+        <label><input type="checkbox" id="lyr-mdc-munis" /> <span>City limits — Miami-Dade</span></label>
+        <label><input type="checkbox" id="lyr-bro-munis" /> <span>City limits — Broward</span></label>
+      </div>
+
+      <div class="layer-group" data-fl-only>
+        <h3>Incentives &amp; context</h3>
+        <label><input type="checkbox" id="lyr-oz" /> <span>Opportunity Zones</span></label>
+        <label><input type="checkbox" id="lyr-cra" /> <span>CRA districts</span></label>
+        <label><input type="checkbox" id="lyr-brownfield" /> <span>Brownfields</span></label>
+        <label><input type="checkbox" id="lyr-enterprise" /> <span>Enterprise Zones</span></label>
+        <label><input type="checkbox" id="lyr-historic" /> <span>Historic districts</span></label>
+        <label><input type="checkbox" id="lyr-transit-zones" /> <span>Rapid Transit Zones</span></label>
+        <label><input type="checkbox" id="lyr-transit" checked /> <span>Metrorail / Metromover</span></label>
+        <label><input type="checkbox" id="lyr-schools" /> <span>Schools</span></label>
+        <label><input type="checkbox" id="lyr-parks" /> <span>Parks</span></label>
+      </div>
+    </details>
+
+    <details class="layer-panel" id="saved-panel">
+      <summary>Saved <span id="saved-count" class="count-pill" hidden></span></summary>
+      <div class="layer-group">
+        <a id="marks-export" class="link-btn" href="/api/marks.csv" download>Export CSV</a>
+        <div id="marks-list" class="empty">Nothing saved yet. Select a parcel and hit ★.</div>
+      </div>
+    </details>
+
+    <footer>
+      <a href="#" id="share-link">Share this view</a>
+      <span class="dot">·</span>
+      <a href="#" class="go-reference">Sources &amp; glossary</a>
+    </footer>
+  </aside>
+
+  <!-- ══ workspace (records / markets / reference) ═══════════════════════ -->
+  <section id="workspace" hidden>
+
+    <!-- ── condo takeovers ── -->
+    <div class="ws-pane" id="ws-records" hidden>
+      <div class="ws-filters">
+        <input type="search" id="t-q" placeholder="Condo, address or owner" />
+        <select id="t-city"><option value="">All cities</option></select>
+        <label class="inl">Units ≥ <input type="number" id="t-units" value="50" min="0" step="10" /></label>
+        <label class="inl">Age ≥ <input type="number" id="t-age" value="30" min="0" step="5" /></label>
+        <label class="inl">Top owner ≥ <input type="number" id="t-conc" value="0" min="0" max="100" step="5" />%</label>
+        <label class="chk"><input type="checkbox" id="t-milestone" /> Milestone due</label>
+        <select id="t-sort">
+          <option value="score">Sort: score</option>
+          <option value="concentration">Sort: largest owner</option>
+          <option value="mail">Sort: shared mailing</option>
+          <option value="units">Sort: units</option>
+          <option value="age">Sort: age</option>
+          <option value="absentee">Sort: absentee</option>
+          <option value="value">Sort: $/unit, low first</option>
+        </select>
+        <span class="grow"></span>
+        <span class="ws-count" id="t-count"></span>
+        <button id="t-export" class="ghost-btn">Export</button>
+      </div>
+      <div class="ws-body">
+        <div class="ws-table" id="t-scroll">
+          <table class="grid-table">
+            <thead><tr>
+              <th data-tsort="name">Condo</th>
+              <th class="n" data-tsort="units">Units</th>
+              <th class="n" data-tsort="age">Age</th>
+              <th class="n" data-tsort="concentration">Top owner</th>
+              <th class="n" data-tsort="mail">Shared mail</th>
+              <th class="n" data-tsort="absentee">Absentee</th>
+              <th class="n" data-tsort="value">$/unit</th>
+              <th class="n" data-tsort="score">Score</th>
+            </tr></thead>
+            <tbody id="t-rows"></tbody>
+          </table>
+          <div class="ws-pager">
+            <button id="t-prev">‹</button><span id="t-page"></span><button id="t-next">›</button>
+          </div>
+        </div>
+        <div class="ws-map-slot" id="records-map-slot"></div>
+      </div>
+    </div>
+
+    <!-- ── markets ── -->
+    <div class="ws-pane" id="ws-markets" hidden>
+      <div class="dd-bar">
+        <input type="search" id="dd-q" autocomplete="off"
+               placeholder="Name a market for a due diligence report — “Columbus Ohio”" />
+        <button id="dd-go" class="primary-btn">Build report</button>
+        <div class="dd-hits" id="dd-hits" hidden></div>
+      </div>
+      <div class="ws-filters">
+        <input type="search" id="m-q" placeholder="Filter the list" />
+        <select id="m-stage"><option value="">All stages</option></select>
+        <select id="m-state"><option value="">All states</option></select>
+        <label class="inl">Population ≥ <input type="number" id="m-pop" value="250000" min="0" step="50000" /></label>
+        <label class="chk"><input type="checkbox" id="m-metro" checked /> Metros only</label>
+        <select id="m-sort">
+          <option value="score">Sort: score</option>
+          <option value="demand">Sort: migration pull</option>
+          <option value="income">Sort: arrivals' income</option>
+          <option value="headroom">Sort: headroom</option>
+          <option value="affordability">Sort: affordability</option>
+          <option value="jobs">Sort: jobs</option>
+          <option value="population">Sort: population</option>
+          <option value="permits">Sort: permits, low first</option>
+        </select>
+        <span class="grow"></span>
+        <span class="ws-count" id="m-count"></span>
+        <button id="m-home" class="ghost-btn">Home market</button>
+      </div>
+      <div class="ws-body">
+        <div class="ws-table wide">
+          <table class="grid-table">
+            <thead><tr>
+              <th data-msort="name">Market</th>
+              <th>Stage</th>
+              <th class="n" data-msort="population">Population</th>
+              <th class="n" data-msort="migration">Net mig /1k</th>
+              <th class="n" data-msort="income">Arrivals' AGI</th>
+              <th class="n" data-msort="permits">Permits /1k</th>
+              <th class="n">Home value</th>
+              <th class="n">3yr price</th>
+              <th class="n" data-msort="headroom">Headroom</th>
+              <th class="n" data-msort="score">Score</th>
+            </tr></thead>
+            <tbody id="m-rows"></tbody>
+          </table>
+          <div class="ws-pager">
+            <button id="m-prev">‹</button><span id="m-page"></span><button id="m-next">›</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── reference ── -->
+    <div class="ws-pane" id="ws-reference" hidden>
+      <div class="ref-scroll">
+        <div class="ref-cols">
+
+          <section class="ref-card">
+            <h2>What this covers</h2>
+            <table class="ref-table">
+              <tr><th>Anywhere in the US</th><td>Flood risk (FEMA), county deed and recorder link, Census tract and building code, HUD fair-market rents, Zillow market rents, transit routes and stops</td></tr>
+              <tr><th>Parcels</th><td>Owner, value and sales — all Florida, NYC and ten more states free; other states need a Regrid key</td></tr>
+              <tr><th>Zoning</th><td>All Florida plus <span id="cities-count-cov">80+</span> cities (NYC, SF, Seattle, Boston, Phoenix, Portland…). Elsewhere the assessor land-use code stands in</td></tr>
+              <tr><th>Permits</th><td>Miami-Dade plus 32 city services</td></tr>
+              <tr><th>Deepest — Miami-Dade &amp; Broward</th><td>Full Property Appraiser record, incentives, Live Local screening, condo termination targets</td></tr>
+            </table>
+            <p class="ref-note">Layers marked <b>Anywhere</b> load as you pan. The <b>South Florida</b> group is pre-baked and colours in immediately. Click any parcel anywhere for its full record.</p>
+          </section>
+
+          <section class="ref-card">
+            <h2>Zoning colours</h2>
+            <div id="zone-cat-legend"></div>
+          </section>
+
+          <section class="ref-card">
+            <h2>Miami-Dade land use</h2>
+            <div id="legend-items"></div>
+          </section>
+
+          <section class="ref-card">
+            <h2>Flood zones</h2>
+            <div id="flood-legend"></div>
+          </section>
+
+          <section class="ref-card ref-wide">
+            <h2>Density &amp; zoning glossary</h2>
+            <div class="glossary">
+              <div class="gl-grp">Density metrics</div>
+              <div class="gl-row"><b>FAR</b> — Floor Area Ratio. Buildable floor area ÷ lot area. FAR 3.0 on a 10,000 sf lot = 30,000 sf of building. The single biggest driver of how much you can build.</div>
+              <div class="gl-row"><b>du/ac</b> — Dwelling units per acre. Caps how many homes fit on the land regardless of size.</div>
+              <div class="gl-row"><b>Lot coverage</b> — % of the lot the building footprint may cover.</div>
+              <div class="gl-row"><b>Height</b> — Max in feet or stories; often the binding constraint near transit.</div>
+
+              <div class="gl-grp">Density tiers (du/ac)</div>
+              <div class="gl-row"><span class="gl-chip" style="background:#dcfce7;color:#166534">Low ≤7</span> single-family / large-lot</div>
+              <div class="gl-row"><span class="gl-chip" style="background:#fef9c3;color:#854d0e">Medium 8–20</span> townhomes, duplex, small multifamily</div>
+              <div class="gl-row"><span class="gl-chip" style="background:#ffedd5;color:#9a3412">High 21–60</span> mid-rise multifamily</div>
+              <div class="gl-row"><span class="gl-chip" style="background:#fee2e2;color:#991b1b">Very high 60+</span> high-rise / urban core</div>
+
+              <div class="gl-grp">Zoning code families</div>
+              <div class="gl-row"><b>R / RS / RE / SF</b> — Residential, single-family</div>
+              <div class="gl-row"><b>RM / RD / MF / RH</b> — Residential, multifamily (RM-high = densest)</div>
+              <div class="gl-row"><b>C / CB / CC / CG / B</b> — Commercial / business</div>
+              <div class="gl-row"><b>MU / MX / MXD</b> — Mixed-use (residential over retail)</div>
+              <div class="gl-row"><b>M / I / IL / IH</b> — Industrial / manufacturing (light → heavy)</div>
+              <div class="gl-row"><b>O / OR</b> — Office / Office-residential</div>
+              <div class="gl-row"><b>OS / P / REC</b> — Open space / parks / recreation</div>
+              <div class="gl-row"><b>A / AG / AR</b> — Agricultural / rural</div>
+              <div class="gl-row"><b>D / DT / DC / DX</b> — Downtown / downtown-core / downtown-mixed</div>
+              <div class="gl-row"><b>T3 → T6</b> — Form-based "Transect" (Miami 21, SmartCode): T3 sub-urban → T4 general urban → T5 urban center → T6 urban core (densest). Suffix shows max stories, e.g. T6-48 = 48 stories.</div>
+              <div class="gl-row"><b>PUD / PD / PDD</b> — Planned (Unit) Development — custom negotiated standards, not a fixed table.</div>
+              <div class="gl-note">Codes vary by city. Click any parcel for that jurisdiction's exact definition, standards and bonus provisions via the code link.</div>
+            </div>
+          </section>
+
+          <section class="ref-card ref-wide">
+            <h2>How the condo screen works</h2>
+            <div class="glossary">
+              <div class="gl-row"><b>The statute.</b> <a href="https://www.flsenate.gov/laws/statutes/2017/718.117" target="_blank" rel="noopener">FS 718.117</a> permits termination of a condominium on 80% approval with no more than 5% objecting. Many older declarations set a higher bar, frequently unanimity.</div>
+              <div class="gl-row"><b>Kaufman language.</b> Whether the statutory 80% reaches a given building turns on whether its declaration adopts the Condominium Act <i>as amended from time to time</i> — after <i>Kaufman v. Shere</i>, 347 So. 2d 627 (Fla. 3d DCA 1977). Nobody publishes which buildings have it, which is why the screen is two stages: rank 6,160 buildings from free bulk data, then read declarations only for the survivors.</div>
+              <div class="gl-row"><b>Original vs by amendment.</b> Florida's Third DCA ruled against a developer that acquired 183 of 192 units and then amended the declaration to insert Kaufman language and drop the threshold from unanimous to 80%. Kaufman in the original recorded declaration carries weight; Kaufman added later by a bulk owner is the fact pattern that lost. The two are recorded as separate findings and never collapsed.</div>
+              <div class="gl-row"><b>The score</b> weights ownership concentration highest, because a single owner above about 20% means someone is already assembling the building. Age, scale and absentee share make up the rest.</div>
+              <div class="gl-row"><b>Sale prices.</b> The tax roll stamps an instrument's whole consideration on every folio it conveys, so a deed covering ten units shows the package price ten times. Comps here group sales into instruments and divide package prices down to a per-unit basis; single-unit sales are reported separately, because those are the arm's-length signal.</div>
+            </div>
+          </section>
+
+          <section class="ref-card ref-wide">
+            <h2>Data sources</h2>
+            <div class="sources">
+              <div class="src-grp">Parcels &amp; ownership</div>
+              <a href="https://floridarevenue.com/property/" target="_blank" rel="noopener">FL Dept. of Revenue property data portal</a>
+              <a href="https://www.miamidade.gov/pa/" target="_blank" rel="noopener">Miami-Dade Property Appraiser</a>
+              <a href="https://web.bcpa.net/" target="_blank" rel="noopener">Broward County Property Appraiser</a>
+              <a href="https://www.nyc.gov/content/planning/pages/resources/datasets/mappluto-pluto-change" target="_blank" rel="noopener">NYC MapPLUTO™ (Dept. of City Planning)</a>
+              <span class="src-note">+ statewide layers: MA, NJ, WI, OH, MT, CT, VT, AR, ND, IA · Regrid (optional, other states)</span>
+
+              <div class="src-grp">Zoning &amp; land use</div>
+              <a href="https://gisweb.miamidade.gov/" target="_blank" rel="noopener">Miami-Dade GIS (Municipal Zoning)</a>
+              <a href="https://www.nyc.gov/content/planning/pages/resources#datasets" target="_blank" rel="noopener">NYC GIS Zoning Features (DCP)</a>
+              <span class="src-note">+ <span id="cities-count-src">80+</span> city zoning services nationwide · assessor land-use code elsewhere</span>
+
+              <div class="src-grp">Rents</div>
+              <a href="https://www.zillow.com/research/data/" target="_blank" rel="noopener">Zillow Research ZORI — typical market asking rent by ZIP and metro</a>
+              <a href="https://www.huduser.gov/portal/datasets/fmr.html" target="_blank" rel="noopener">HUD Fair Market Rents — 40th-percentile ceiling by FMR area</a>
+
+              <div class="src-grp">Flood &amp; environment</div>
+              <a href="https://www.fema.gov/flood-maps/national-flood-hazard-layer" target="_blank" rel="noopener">FEMA National Flood Hazard Layer</a>
+              <a href="https://www.fws.gov/program/national-wetlands-inventory" target="_blank" rel="noopener">USFWS National Wetlands Inventory</a>
+              <a href="https://apps.nationalmap.gov/epqs/" target="_blank" rel="noopener">USGS ground elevation (EPQS)</a>
+              <a href="https://www.epa.gov/superfund" target="_blank" rel="noopener">EPA Superfund NPL sites</a>
+              <a href="https://www.fema.gov/api/open" target="_blank" rel="noopener">OpenFEMA disaster declarations</a>
+
+              <div class="src-grp">Permits</div>
+              <a href="https://gis-mdc.opendata.arcgis.com/" target="_blank" rel="noopener">Miami-Dade building permits</a>
+              <span class="src-note">+ 32 city permit services</span>
+
+              <div class="src-grp">Deeds, entities &amp; transactions</div>
+              <a href="https://publicrecords.netronline.com/" target="_blank" rel="noopener">NETROnline county recorder directory</a>
+              <a href="https://search.sunbiz.org/" target="_blank" rel="noopener">FL Sunbiz — Division of Corporations (LLC principals)</a>
+              <a href="https://opencorporates.com/" target="_blank" rel="noopener">OpenCorporates (other states)</a>
+              <span class="src-note">Recorded deeds are public everywhere and cover commercial sales. In about twelve non-disclosure states (TX, KS, MO, MT, NM, ND, UT, WY, ID, MS, LA, AK) the price is legally withheld. Aggregated national sale feeds and commercial comps are the paid layer: Regrid, CoStar, MSCI RCA, Reonomy, Crexi.</span>
+
+              <div class="src-grp">Condo screen (Miami-Dade)</div>
+              <span class="src-note">FDOR NAL tax roll — 391,210 condo units with owner and mailing address, year built, just and land value, last sale. DBPR condominium registry — 5,456 associations with declaration recording date and managing entity. Miami-Dade PaParcelView — land parcels supplying condo names and site coordinates.</span>
+
+              <div class="src-grp">Demographics &amp; economy</div>
+              <a href="https://www.census.gov/data/developers/data-sets/acs-5year.html" target="_blank" rel="noopener">US Census ACS + geocoder</a>
+              <a href="https://www.bls.gov/cew/" target="_blank" rel="noopener">BLS QCEW — county employment and wages</a>
+              <a href="https://www.irs.gov/statistics/soi-tax-stats-migration-data" target="_blank" rel="noopener">IRS SOI county-to-county migration with AGI</a>
+              <a href="https://www.census.gov/construction/bps/" target="_blank" rel="noopener">Census Building Permits Survey</a>
+
+              <div class="src-grp">Brokers, transit &amp; codes</div>
+              <a href="https://www2.myfloridalicense.com/real-estate-commission/public-records/" target="_blank" rel="noopener">FL DBPR public licensee extract</a>
+              <a href="https://www.bts.gov/national-transit-map" target="_blank" rel="noopener">BTS National Transit Map</a>
+              <a href="https://up.codes/" target="_blank" rel="noopener">UpCodes / ICC (adopted building codes)</a>
+              <a href="https://www.openstreetmap.org/" target="_blank" rel="noopener">OpenStreetMap (walkable amenities, ODbL)</a>
+
+              <div class="src-grp">Basemaps</div>
+              <span class="src-note">CARTO &amp; OpenStreetMap · satellite imagery © Esri</span>
+            </div>
+          </section>
+
+          <section class="ref-card ref-wide">
+            <h2>Brokers</h2>
+            <p class="ref-note">Public license rosters. Florida carries the full DBPR extract, scoped to the market in view. Other states link to their official license-lookup portal.</p>
+            <h3 id="brokers-summary">Licensed brokers</h3>
+            <div class="seg" id="brokers-type" style="margin-bottom:8px">
+              <button class="seg-btn active" data-btype="all">All</button>
+              <button class="seg-btn" data-btype="broker">Brokers</button>
+              <button class="seg-btn" data-btype="brokerage">Brokerages</button>
+            </div>
+            <div class="search-box">
+              <svg class="icon" viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                <path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M11 19a8 8 0 1 0 0-16 8 8 0 0 0 0 16zM21 21l-4.5-4.5"/>
+              </svg>
+              <input type="text" id="brokers-q" placeholder="Search broker or brokerage" autocomplete="off" />
+            </div>
+            <div id="brokers-body" style="margin-top:8px"><span class="ref-note">Click a parcel, or pick a city, to scope the directory to that market.</span></div>
+          </section>
+
+          <section class="ref-card ref-wide">
+            <p class="disclaimer">Informational only — aggregated from public GIS and assessor sources that may be outdated or inaccurate. This is not zoning, legal, valuation, or engineering advice. Verify all figures with the governing jurisdiction and licensed counsel before acquisition or design.</p>
+          </section>
+
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ══ map ═══════════════════════════════════════════════════════════ -->
+  <div id="map">
+    <div id="hover-tag" hidden></div>
+  </div>
+</div>
+
+<!-- ══ target detail drawer ═════════════════════════════════════════════ -->
+<div id="t-scrim" hidden></div>
+<aside id="t-drawer" hidden>
+  <button class="t-close" id="t-close" aria-label="Close">&times;</button>
+  <div id="t-detail"></div>
+</aside>
+
+<!-- Kept for app.js: tab containers it still toggles, now that the sidebar has
+     no tab strip. Hidden and empty on purpose. -->
+<div hidden>
+  <div id="tab-explore"></div>
+  <div id="tab-saved"></div>
+  <div id="tab-brokers"></div>
+  <span id="cities-count"></span>
+</div>
+
+<div id="compare-tray" hidden>
+  <div class="compare-head">
+    <b>Compare properties</b>
+    <button id="compare-close" type="button" aria-label="Close">&times;</button>
+  </div>
+  <div id="compare-table-wrap"></div>
+</div>
+
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<script src="app.js?v=76"></script>
+<script src="workspace.js?v=3"></script>
+</body>
+</html>
