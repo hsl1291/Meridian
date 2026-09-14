@@ -132,6 +132,8 @@
 
         <label><input type="checkbox" id="lyr-metro-zoning" /> <span>Zoning</span>
           <span class="hint" title="Live municipal zoning polygons, coloured by use, for every wired city. Loads as you pan from about zoom 13.">?</span></label>
+        <label class="sub-toggle"><input type="checkbox" id="lyr-zoning-3d" /> <span>Massing (3D)</span>
+          <span class="hint" title="Raises each zoning polygon to the height its district code declares, at ten feet per storey. This is the zoning ENVELOPE, not the building: it ignores setbacks, lot coverage and site geometry. Districts that declare no height stay flat. Zoom 13+.">?</span></label>
         <div id="metro-zoning-note" class="mini-note" hidden></div>
 
         <label><input type="checkbox" id="lyr-rents" /> <span>Rents</span>
@@ -551,7 +553,8 @@
 </div>
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
-<script src="app.js?v=76"></script>
+<script src="zoning3d.js?v=1"></script>
+<script src="app.js?v=77"></script>
 <script src="workspace.js?v=3"></script>
 </body>
 </html>

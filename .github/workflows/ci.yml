@@ -22,3 +22,10 @@ jobs:
       # every script under scripts/prospect/ imports, and the data-dependent
       # routes report an unbuilt store rather than raising a 500.
       - run: python -m pytest tests/ -q
+
+      # The map's zoning intensity and massing maths run under plain Node --
+      # pure functions, no DOM and no browser, so CI needs no headless Chrome.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node --test "tests/js/*.test.js"

@@ -85,11 +85,16 @@ function parseHash() {
   const p = new URLSearchParams(h);
   const z = parseFloat(p.get('z')), lat = parseFloat(p.get('lat')), lon = parseFloat(p.get('lon'));
   const sel = p.get('sel');
+  // Pitch and bearing, so a tilted view is shareable. Without them a link to a
+  // massing view arrives flat, which is the one thing it was sent to show.
+  const cam = (window.Zoning3D ? window.Zoning3D.parseCamera(p) : { pitch: null, bearing: null });
   return {
     center: Number.isFinite(lat) && Number.isFinite(lon) ? [lon, lat] : null,
     zoom: Number.isFinite(z) ? z : null,
     selection: sel ? sel.split(',').map(Number) : null,
     basemap: p.get('bm'),
+    pitch: cam.pitch,
+    bearing: cam.bearing,
   };
 }
 const initial = parseHash();
@@ -107,9 +112,12 @@ const map = new maplibregl.Map({
   },
   center: initial.center || US_CENTER,
   zoom: initial.zoom || 4.2,
+  pitch: initial.pitch ?? 0,
+  bearing: initial.bearing ?? 0,
   maxZoom: 19,
 });
-map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+// showCompass:false left no affordance to rotate or tilt at all.
+map.addControl(new maplibregl.NavigationControl({ showCompass: true, visualizePitch: true }), 'top-right');
 map.addControl(new maplibregl.ScaleControl({ unit: 'imperial' }), 'bottom-right');
 
 // The canvas is sized once at construction. If the app starts in a container the
@@ -707,18 +715,23 @@ map.on('style.load', () => {
   map.addSource('metro_zoning', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
   map.addLayer({ id: 'metro-zoning-fill', type: 'fill', source: 'metro_zoning', layout: { visibility: 'none' },
     paint: {
-      'fill-color': ['match', ['get', 'category'],
-        'residential', ZONE_CAT_COLORS.residential,
-        'commercial', ZONE_CAT_COLORS.commercial,
-        'industrial', ZONE_CAT_COLORS.industrial,
-        'office', ZONE_CAT_COLORS.office,
-        'mixed', ZONE_CAT_COLORS.mixed,
-        'downtown', ZONE_CAT_COLORS.downtown,
-        'open', ZONE_CAT_COLORS.open,
-        'agricultural', ZONE_CAT_COLORS.agricultural,
-        'special', ZONE_CAT_COLORS.special,
-        ZONE_CAT_COLORS.other],
+      // Darkened within the family by the storey cap the district code
+      // declares, so T6-8 and T6-80 stop painting identically. Features with no
+      // declared height keep the flat family colour.
+      'fill-color': Zoning3D.fillColorExpression(ZONE_CAT_COLORS),
       'fill-opacity': 0.5,
+    } });
+  // Massing. This is the ZONING ENVELOPE, not the building: it ignores setbacks,
+  // lot coverage and site geometry, exactly as capacity.py warns. Off by
+  // default, and raised only where the code states a height -- a zero-height
+  // extrusion is an honest "unknown"; an invented one is a lie with a shadow.
+  map.addLayer({ id: 'metro-zoning-3d', type: 'fill-extrusion', source: 'metro_zoning',
+    layout: { visibility: 'none' }, minzoom: 13,
+    paint: {
+      'fill-extrusion-color': Zoning3D.fillColorExpression(ZONE_CAT_COLORS),
+      'fill-extrusion-height': Zoning3D.extrusionHeightExpression(),
+      'fill-extrusion-base': 0,
+      'fill-extrusion-opacity': 0.72,
     } });
   map.addLayer({ id: 'metro-zoning-line', type: 'line', source: 'metro_zoning', layout: { visibility: 'none' },
     paint: { 'line-color': '#475569', 'line-width': 0.5, 'line-opacity': 0.45 } });
@@ -1980,15 +1993,32 @@ async function refreshPermitHeat() {
 let metroZoningOn = false;
 function wireMetroZoning() {
   const cb = document.getElementById('lyr-metro-zoning');
+  const massing = () => !!document.getElementById('lyr-zoning-3d')?.checked;
   const note = document.getElementById('metro-zoning-note');
   if (!cb) return;
   cb.addEventListener('change', () => {
     metroZoningOn = cb.checked;
     const vis = cb.checked ? 'visible' : 'none';
-    setVis(['metro-zoning-fill', 'metro-zoning-line'], cb.checked);
+    setVis(['metro-zoning-fill', 'metro-zoning-line'], cb.checked && !massing());
+    setVis(['metro-zoning-3d'], cb.checked && massing());
     if (cb.checked) refreshMetroZoning(); else map.getSource('metro_zoning')?.setData({ type: 'FeatureCollection', features: [] });
     if (note) note.hidden = !cb.checked;
   });
+  // Massing replaces the flat fill rather than stacking on it: two coats of the
+  // same polygon at 0.5 and 0.72 opacity just muddies both.
+  const m3d = document.getElementById('lyr-zoning-3d');
+  if (m3d) {
+    m3d.addEventListener('change', () => {
+      setVis(['metro-zoning-fill', 'metro-zoning-line'], cb.checked && !m3d.checked);
+      setVis(['metro-zoning-3d'], cb.checked && m3d.checked);
+      // Tilt on the way in, because a massing layer viewed from directly
+      // overhead is indistinguishable from the flat one it replaced.
+      if (m3d.checked && cb.checked && map.getPitch() < 20) {
+        map.easeTo({ pitch: 55, duration: 600 });
+      }
+    });
+  }
+
   let t = null;
   map.on('moveend', () => {
     if (!metroZoningOn) return;
@@ -2022,7 +2052,17 @@ async function refreshMetroZoning() {
     map.getSource('metro_zoning')?.setData(gj);
     if (note) {
       const n = (gj.features || []).length;
-      note.textContent = n ? `${n} zoning polygons in view` : 'No metro zoning here (tri-county uses the layers above).';
+      // Two different reasons for an empty result, and they need different
+      // actions. METRO_ZONING wires eight Florida cities and not Miami-Dade, so
+      // tri-county zoning comes only from the pre-baked GeoJSON that
+      // fetch_layers.py downloads -- which is absent on a fresh install. Saying
+      // "use the layers above" when those layers were never fetched sends the
+      // user to an empty checkbox.
+      note.textContent = n
+        ? `${n} zoning polygons in view`
+        : (map.querySourceFeatures('mdc_zoning').length
+            ? 'No live zoning service here — the tri-county layers above cover this area.'
+            : 'No zoning for this view. Tri-county zoning is a local layer: run scripts/fetch_layers.py to build it.');
       note.hidden = false;
     }
   } catch (e) {
@@ -4041,12 +4081,17 @@ function updateHash() {
   params.set('lat', c.lat.toFixed(5));
   params.set('lon', c.lng.toFixed(5));
   params.set('bm', activeBasemap);
+  const pitch = map.getPitch(), bearing = map.getBearing();
+  if (pitch > 0.5) params.set('pitch', pitch.toFixed(1));
+  if (Math.abs(bearing) > 0.5) params.set('bearing', bearing.toFixed(1));
   if (lastSelection) params.set('sel', `${lastSelection.lon.toFixed(6)},${lastSelection.lat.toFixed(6)}`);
   history.replaceState(null, '', '#' + params.toString());
 }
 function wireHash() {
   map.on('moveend', updateHash);
   map.on('zoomend', updateHash);
+  map.on('pitchend', updateHash);
+  map.on('rotateend', updateHash);
 }
 function wireShare() {
   document.getElementById('share-link').addEventListener('click', (e) => {
