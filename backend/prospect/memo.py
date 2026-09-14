@@ -291,15 +291,24 @@ def gather(group_key: str, con: sqlite3.Connection,
 # ── render ─────────────────────────────────────────────────────────────────
 
 CSS = """
+/* Print geometry.
+   The side inset is set in ONE place per medium. On paper that is @page; on
+   screen it is .pad and .cover. They used to stack -- @page inset 0.7in and then
+   .pad added another 0.7in inside it, leaving about 5.7in of live width on
+   Letter for tables built for more. */
 @page { size: Letter; margin: 0.75in 0.7in 0.85in; }
 *{box-sizing:border-box}
-body{margin:0;font:10.5pt/1.55 Georgia,"Times New Roman",serif;color:#16212e;background:#f2f4f7}
+body{margin:0;font:10.5pt/1.55 Georgia,"Times New Roman",serif;color:#16212e;background:#f2f4f7;
+  orphans:3;widows:3}
 .sheet{max-width:7.6in;margin:0 auto;padding:0 0 40px;background:#fff;
   box-shadow:0 1px 30px rgba(15,23,42,.08)}
-@media print{ body{background:#fff} .sheet{box-shadow:none} .noprint{display:none} }
 .pad{padding:0 .7in}
 h1,h2,h3,.eyebrow,table,.kv,.statband{font-family:"Helvetica Neue",Arial,sans-serif}
-.cover{min-height:9.6in;display:flex;flex-direction:column;justify-content:space-between;
+
+/* 11in sheet less 0.75in + 0.85in of @page margin leaves 9.4in of live height.
+   This was 9.6in, so it overflowed by two tenths of an inch and
+   page-break-after then added a second break -- every memo had a blank page 2. */
+.cover{min-height:9.2in;display:flex;flex-direction:column;justify-content:space-between;
   page-break-after:always;padding:1.1in .7in .6in}
 .eyebrow{letter-spacing:.24em;text-transform:uppercase;font-size:8.5pt;color:#77879a;font-weight:600}
 .cover h1{font-size:36pt;line-height:1.04;margin:16px 0 8px;font-weight:600;letter-spacing:-.6px}
@@ -310,34 +319,57 @@ h1,h2,h3,.eyebrow,table,.kv,.statband{font-family:"Helvetica Neue",Arial,sans-se
 .statband div:last-child{border-right:none}
 .statband b{display:block;font:600 18pt/1.1 "Helvetica Neue",Arial,sans-serif;color:#1f3b57}
 .statband span{font-size:8pt;letter-spacing:.12em;text-transform:uppercase;color:#77879a}
-section{page-break-inside:avoid;margin:0 0 26px}
+
+/* Break avoidance belongs on rows and small blocks. It used to sit on `section`,
+   which can be taller than a sheet -- where it either does nothing or pushes a
+   large blank gap ahead of the section. */
+section{margin:0 0 26px}
+h2,h3{break-after:avoid;page-break-after:avoid}
 h2{font-size:14.5pt;margin:32px 0 3px;color:#1f3b57;font-weight:600;letter-spacing:-.2px}
 h2+.sub{color:#77879a;font-size:9pt;margin:0 0 12px}
 h3{font-size:10.5pt;margin:18px 0 5px;color:#16212e;font-weight:600}
 p{margin:0 0 10px}
 table{border-collapse:collapse;width:100%;font-size:9.2pt;margin:9px 0 4px}
+/* A forty-row sales table runs onto the next page. Without this it arrives
+   there with no column labels. */
+thead{display:table-header-group}
+tfoot{display:table-footer-group}
+tr{break-inside:avoid;page-break-inside:avoid}
 th{text-align:left;font-size:7.6pt;letter-spacing:.09em;text-transform:uppercase;color:#77879a;
   border-bottom:1.5px solid #1f3b57;padding:6px 7px;font-weight:600}
 td{padding:5.5px 7px;border-bottom:1px solid #e8edf2}
 td.n,th.n{text-align:right;font-variant-numeric:tabular-nums}
 tr.subject td{background:#f2f7fc;font-weight:600}
 tr.total td{border-top:1.5px solid #1f3b57;border-bottom:none;font-weight:700;background:#f7f9fb}
-.kv{display:grid;grid-template-columns:repeat(auto-fill,minmax(1.6in,1fr));gap:1px;
+/* Fixed track count: auto-fill with 1fr stretched a leftover cell across the
+   whole final row whenever the count did not divide evenly. */
+.kv{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;
   background:#e8edf2;border:1px solid #e8edf2;margin:12px 0}
-.kv div{background:#fff;padding:9px 11px}
+.kv div{background:#fff;padding:9px 11px;break-inside:avoid}
 .kv b{display:block;font:600 12.5pt/1.2 "Helvetica Neue",Arial,sans-serif;color:#1f3b57}
 .kv span{font-size:7.6pt;letter-spacing:.09em;text-transform:uppercase;color:#77879a}
 .callout{border-left:3px solid #1f3b57;background:#f7f9fb;padding:11px 14px;margin:14px 0;
-  font-size:9.8pt}
+  font-size:9.8pt;break-inside:avoid;page-break-inside:avoid}
 .gap{border-left:3px solid #c8791d;background:#fdf7ef;padding:10px 13px;margin:12px 0;
-  font-size:9.2pt;color:#7a5312;font-family:"Helvetica Neue",Arial,sans-serif}
+  font-size:9.2pt;color:#7a5312;font-family:"Helvetica Neue",Arial,sans-serif;
+  break-inside:avoid;page-break-inside:avoid}
 .gap ul{margin:6px 0 0;padding-left:18px}
 .foot{margin-top:36px;padding-top:12px;border-top:1px solid #d5dde5;font-size:7.8pt;
-  color:#8a99a9;font-family:"Helvetica Neue",Arial,sans-serif;page-break-inside:avoid}
+  color:#8a99a9;font-family:"Helvetica Neue",Arial,sans-serif;break-inside:avoid}
 .src{font-size:7.8pt;color:#8a99a9;font-family:"Helvetica Neue",Arial,sans-serif;margin:3px 0 0}
 .noprint{position:fixed;top:14px;right:16px;background:#1f3b57;color:#fff;border:none;
   padding:9px 15px;border-radius:6px;font:600 12px "Helvetica Neue",Arial;cursor:pointer;
   box-shadow:0 2px 10px rgba(15,23,42,.2)}
+
+@media print{
+  body{background:#fff}
+  .sheet{box-shadow:none;max-width:none}
+  .noprint{display:none}
+  /* @page already owns the side inset on paper. */
+  .pad{padding:0}
+  .cover{padding:0.35in 0 0.2in}
+  .kv{grid-template-columns:repeat(4,1fr)}
+}
 """
 
 
