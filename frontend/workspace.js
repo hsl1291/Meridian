@@ -410,7 +410,20 @@
       <td class="n">${n.sale_psf ? usd(n.sale_psf) : '—'}</td></tr>`).join('')
       || '<tr><td colspan="6" class="dim">No comparable buildings within the radius.</td></tr>';
 
+    // The distribution, before the numbers. The bulk-deed trap is a paragraph of
+    // warning in the table below and a paragraph is easy to skim; as a picture
+    // the two populations plainly are not one.
+    const strip = window.Charts ? Charts.stripPlot(
+      c.in_building.map((r) => ({ value: r.per_unit, bulk: !!r.bulk,
+        label: `${r.sale_yr1 || ''} ${(r.buyer || '').slice(0, 24)}`.trim() })),
+      { title: 'Recorded price per unit' }) : '';
+    const legend = strip && c.in_building.length ? `<div class="chart-legend">
+      <span><i class="single"></i>Single-unit sale</span>
+      <span><i class="bulk"></i>Folio on a bulk deed</span>
+      <span>Dashed line: single-unit median</span></div>` : '';
+
     box.innerHTML = `
+      ${strip}${legend}
       <div class="cells">
         <div><b>${fmt(s.units_with_price)}</b><span>Units w/ price</span></div>
         <div><b>${fmt(s.single_unit_count)}</b><span>Single-unit sales</span></div>

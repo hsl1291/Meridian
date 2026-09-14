@@ -219,7 +219,7 @@ roll. Every estimate prints both limits.
 
 ---
 
-## Phase 3 — the map
+## Phase 3 — the map  ✅ done
 
 **6 days.** The reference point is [Gridics](https://map.gridics.com/us/fl/miami-beach),
 which is Miami-built on Miami 21 and whose whole argument is in its URL fragment:
@@ -256,7 +256,7 @@ Also added: `_zone_stories`, which recovers the storey cap a form-based code
 `max_stories` on every overlay feature. Codes that declare no height report
 `None` rather than a guess. One property, two consumers: 3.2 and 3.3.
 
-### 3.2 Intensity inside the family *(1 day)*
+### 3.2 Intensity inside the family  ✅ done
 
 Every T6 tier currently paints one colour, so `T6-8-O` and `T6-80-O` are
 indistinguishable on the map. For a termination screen that is the wrong thing to
@@ -267,7 +267,7 @@ Ramp lightness within each family by `max_stories` rather than adding colours �
 the ten-family legend stays readable and the tiers separate. Legend gains a
 lightness scale, not ten more swatches.
 
-### 3.3 Three dimensions *(3 days)*
+### 3.3 Three dimensions  ✅ done
 
 - `NavigationControl({ showCompass: false })` → `true`. There is currently no
   affordance for rotate or tilt at all.
@@ -282,7 +282,7 @@ needs setbacks, lot coverage and site geometry, which `capacity.py` already warn
 it ignores. Label it as the envelope and it is useful; label it as a building and
 it is a lie with a shadow on it.
 
-### 3.4 The home market has no live zoning service *(1.5 days)*
+### 3.4 The home market has no live zoning service  ✅ partly
 
 `METRO_ZONING` wires Orlando, Tampa, Jacksonville, St. Pete, Clearwater,
 Sarasota, Tallahassee, West Palm Beach — and **not Miami-Dade**. Tri-county
@@ -291,9 +291,17 @@ into `data/`, which is gitignored and absent from a fresh clone. So a new instal
 that has not run the fetch script shows an empty zoning layer over Miami and a
 populated one over Tampa, with nothing in the UI explaining the difference.
 
-Either wire the Miami-Dade and City of Miami services into `METRO_ZONING` as a
-fallback, or have the layer report that its data has not been fetched. Silently
-drawing nothing is the worst of the three options and is what happens now.
+**Correction: the layer was not silent.** It already reported an empty result —
+it reported the wrong *cause*, saying tri-county zoning is handled by "the layers
+above", which is true only once `fetch_layers.py` has been run. Those layers are
+gitignored and absent from a fresh clone, so the message sent the user to an
+empty checkbox. It now distinguishes *no live service here* from *the local layer
+was never fetched* and names the script.
+
+Still open: wiring the Miami-Dade and City of Miami services into
+`METRO_ZONING` so the home market has live coverage at all. That needs the
+service URLs verified against the live endpoints, which this environment cannot
+reach.
 
 ---
 
@@ -308,7 +316,7 @@ carries four print-geometry bugs.
 slopes it draws are not the slopes in the data. Four uses in the DD report. Zero
 charts in `app.js` or `workspace.js`.
 
-### 4.1 The chart module *(2 days)*
+### 4.1 The chart module  ✅ done
 
 `frontend/charts.js`, hand-rolled SVG. The app has no build step — everything is
 plain script tags — and line, bar, area, scatter and strip plots are a few
@@ -325,14 +333,14 @@ Fix the server-side `_sparkline` against the same geometry while in there. It is
 a twenty-line correction to something that currently draws misleading slopes, and
 that is a bug regardless of where the new charts live.
 
-### 4.2 The charts that earn their place *(3 days)*
+### 4.2 The charts that earn their place  ◑ 1 of 5
 
 Five, in build order. Each one answers a question the app currently answers in
 prose or not at all.
 
-1. **Unit price distribution in a building.** A strip plot of every recorded
-   per-unit price, bulk-deed sales marked separately, the single-unit median
-   drawn as a line. The README's biggest data trap — 148 folios showing up to
+1. **Unit price distribution in a building.** ✅ Built, and live in the Records
+   drawer above the comps table. A strip plot of every recorded per-unit price,
+   bulk-deed sales marked separately, the single-unit median drawn as a line. The README's biggest data trap — 148 folios showing up to
    $4.9M each that are really a handful of bulk deeds — is currently a paragraph
    of warning. It should be a picture, because the picture is unmistakable.
 2. **The buyout waterfall** from 2.2.
@@ -347,7 +355,7 @@ prose or not at all.
    metro highlighted and the diagonal marked. It makes the `tightness` composite
    auditable at a glance, which is what the codebase says it wants from it.
 
-### 4.3 The memo prints badly *(3 days)*
+### 4.3 The memo prints badly  ✅ done
 
 The memo's typography is considered — the problems are geometry, and they are the
 kind that only appear on paper.
@@ -585,8 +593,8 @@ of the coastal counties.
 Phase 0  ██                              1d   DONE
 Phase 1  ██████████████                  7d   1.1 DONE
 Phase 2  ████████                        4d   DONE (comps only)
-Phase 3  ████████████                    6d   the map: colour, intensity, 3D
-Phase 4  ████████████████                8d   charts, and the memo's print bugs
+Phase 3  ████████████                    6d   DONE
+Phase 4  ████████████████                8d   4.1 + 4.3 DONE; 4 charts left
 Phase 5  ██████████████                  7d   where the population is going
 Phase 6  ██████████████████              9d   who is already assembling
 Phase 7  ██████████████████              9d   declarations at scale

@@ -849,3 +849,35 @@ body { display: flex; }
 .pop-slider-row { display: flex; align-items: center; gap: 6px; font-size: 10.5px; color: var(--text-muted); }
 .pop-slider-row input[type="range"] { flex: 1; accent-color: var(--brand); }
 .pop-slider-row b { min-width: 32px; font-size: 10.5px; }
+
+/* ── charts ─────────────────────────────────────────────────────────────
+   Every colour here is a token, so charts follow the app's theme instead of
+   carrying their own palette. charts.js emits class names and no paint
+   attributes at all -- which is the rule the old server-side sparkline broke
+   by hardcoding #1f3b57. */
+.chart { display: block; width: 100%; height: auto; margin: 6px 0 2px; overflow: visible; }
+.chart-grid { stroke: var(--border-soft); stroke-width: 1; }
+.chart-tick { fill: var(--text-dim); font-size: 9px; font-variant-numeric: tabular-nums; }
+.chart-empty { fill: var(--text-dim); font-size: 11px; }
+
+/* Single-unit sales are the arm's-length signal, so they read as the subject;
+   bulk-deed folios are context and stay quieter. */
+.chart-mark.single { fill: var(--brand); fill-opacity: .85; }
+.chart-mark.bulk { fill: var(--text-dim); fill-opacity: .45; }
+.chart-mark { stroke: var(--bg); stroke-width: 1; }
+.chart-median { stroke: var(--warn); stroke-width: 1.5; stroke-dasharray: 3 2; }
+.chart-median-label { fill: var(--warn); font-size: 9px; font-weight: 600; }
+
+.chart-seg { fill: var(--border); }
+.chart-seg.top { fill: var(--brand); }
+.chart-seg.next { fill: var(--brand-soft); }
+.chart-seg.tail { fill: var(--bg-panel); stroke: var(--border); stroke-width: .5; }
+
+.chart-legend {
+  display: flex; flex-wrap: wrap; gap: 4px 14px;
+  font-size: 10.5px; color: var(--text-dim); margin: 2px 0 8px;
+}
+.chart-legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block;
+  margin-right: 5px; vertical-align: -1px; }
+.chart-legend i.single { background: var(--brand); }
+.chart-legend i.bulk { background: var(--text-dim); opacity: .5; }
