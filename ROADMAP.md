@@ -457,12 +457,12 @@ is the question worth answering.
 
 ---
 
-## Phase 6 — movement, not level
+## Phase 6 — movement, not level  ✅ done
 
 **9 days.** This slipped down the list and it is worth saying why it should not
 slip off it.
 
-### 6.1 Roll vintage history and assembly velocity *(3 days)*
+### 6.1 Roll vintage history and assembly velocity  ✅ done
 
 `build_targets.py` opens with `DELETE FROM condo_group` and `DELETE FROM target`.
 Every rebuild destroys the prior state, so the app can only answer *who owns a
@@ -481,24 +481,41 @@ the one to be early on. The current screen ranks the first one higher.
 cost me, and is somebody already doing it.** Neither half is worth as much alone.
 This needs no new data source — only the discipline to stop deleting history.
 
-### 6.2 Sunbiz entity resolution *(4 days)*
+### 6.2 Beneficial-owner clustering  ✅ done (Sunbiz deferred)
 
 Shared mailing address is a clever proxy for one buyer behind several LLCs and
 the weakest link in the concentration signal — it misses anyone using a
 registered-agent address or separate mailboxes, and false-positives where a
 management company receives mail for many owners.
 
-Florida's Division of Corporations publishes the full registry as a free bulk
-quarterly download: entity name, registered agent, officers, principal address.
-Joining `owner_norm` to it builds a real graph and collapses beneficial
-ownership properly. *"These four LLCs holding 31% share a manager"* is a
-sentence the tool cannot produce today.
+**Built without Sunbiz, because the registry cannot be downloaded from here and
+a parser written blind against a file format nobody has seen is not worth
+shipping.** The clustering itself does not need it: owners are unioned
+transitively over two auditable rules already computable from the roll — a
+mailing address shared by two or more owner names, and a name series between
+entities (`FLAGLER HOLDINGS I/II LLC`). Transitivity is what makes it worth
+doing: if one Flagler entity shares an address with `BRICKELL 27 LLC`, all three
+are one buyer, which neither rule finds alone.
 
-### 6.3 Watchlists and change alerts *(2 days)*
+Every rule is conservative past the point of leaving real links on the table,
+because the constraint `normalize_owner` already states applies double here: a
+false merge fabricates the number the whole tool is ranked on. A stem below two
+tokens is not used (`BRICKELL 900` and `BRICKELL 1200` are two addresses, not one
+sponsor); individuals are never merged on a name, only entities; and an address
+shared by more than a dozen distinct names is a mail drop, not a buyer. Each edge
+carries its evidence so a cluster can be disbelieved on its specifics.
 
-Once 6.1 exists, a saved filter that re-evaluates each roll and reports what
-entered, exited or moved is small work on top of it. This is what makes the app
-something opened weekly rather than quarterly.
+Sunbiz — officers and registered agents — remains the obvious next edge type and
+plugs into `EDGE_RULES` without touching anything else.
+
+### 6.3 What moved since the last roll  ✅ done
+
+Scoped down for a personal tool: a saved-search subscription system is
+multi-user machinery, and the useful half is the digest. `GET /api/movement`
+compares the two most recent vintages — how many buildings are concentrating,
+dispersing, changing hands, and the biggest movers — with a panel above the
+Records table, plus `sort=assembling` and a *Being assembled* filter on the table
+itself. With one vintage it says so rather than rendering zeros.
 
 ---
 
@@ -614,7 +631,7 @@ Phase 2  ████████                        4d   DONE (comps only)
 Phase 3  ████████████                    6d   DONE
 Phase 4  ████████████████                8d   DONE
 Phase 5  ██████████████                  7d   DONE
-Phase 6  ██████████████████              9d   who is already assembling
+Phase 6  ██████████████████              9d   DONE
 Phase 7  ██████████████████              9d   declarations at scale
 Phase 8  ██████████                      5d   coverage
                                         ───

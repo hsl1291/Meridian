@@ -51,7 +51,8 @@ ASSOC_RE = re.compile(r"\b(ASSOC|ASSN|ASSOCIATION|HOA|HOMEOWNERS?|CONDOMINIUM)\b
 # tables in main() rather than trusted -- a silent drift here is the "table has N
 # columns but M values were supplied" that only shows up mid-load.
 GROUP_COLS = 36
-TARGET_COLS = 39
+TARGET_COLS = 45
+SNAPSHOT_COLS = 15
 
 
 def modal(values):
@@ -264,6 +265,58 @@ def match(con):
     return out
 
 
+# ── movement ───────────────────────────────────────────────────────────────
+
+def prior_snapshot(con, roll_year):
+    """The most recent snapshot STRICTLY BEFORE this roll year, per building.
+
+    Strictly before, so re-running the build for the same roll compares against
+    the previous vintage rather than against itself and reporting no movement.
+    """
+    rows = con.execute(
+        """SELECT s.* FROM target_snapshot s
+           JOIN (SELECT group_key, MAX(roll_year) y FROM target_snapshot
+                 WHERE roll_year < ? GROUP BY group_key) m
+             ON m.group_key = s.group_key AND m.y = s.roll_year""",
+        (roll_year,)).fetchall()
+    return {r["group_key"]: r for r in rows}
+
+
+def movement(g, prior):
+    """Change against the previous roll. All None when there is nothing to
+    compare against -- which is not the same as no change, and the UI must not
+    render it as zero."""
+    if not prior:
+        return (None, None, None, None, None, None)
+    now_conc = max(g["top_owner_pct"] or 0, g["top_mail_pct"] or 0)
+    was_conc = max(prior["top_owner_pct"] or 0, prior["top_mail_pct"] or 0)
+    conc_delta = round(now_conc - was_conc, 2)
+    owners_delta = ((g["distinct_owners"] or 0) - (prior["distinct_owners"] or 0))
+    corp_delta = round((g["corporate_pct"] or 0) - (prior["corporate_pct"] or 0), 2)
+    changed = int((g["top_owner"] or "") != (prior["top_owner"] or ""))
+    # Concentration rising while the owner count falls. Either alone is noise --
+    # one sale moves concentration, and owner counts drift with data cleanup --
+    # but together they are somebody buying the building.
+    flag = int(conc_delta >= 2.0 and owners_delta < 0)
+    return (prior["roll_year"], conc_delta, owners_delta, corp_delta, changed, flag)
+
+
+def write_snapshot(con, roll_year, roll_type):
+    """One row per building for this vintage. REPLACE so a re-run of the same
+    roll corrects itself rather than failing on the primary key."""
+    captured = datetime.now().date().isoformat()
+    rows = [(g["group_key"], roll_year, roll_type, captured, g["unit_folios"],
+             g["top_owner"], g["top_owner_units"], g["top_owner_pct"],
+             g["top_mail_addr"], g["top_mail_pct"], g["distinct_owners"],
+             g["corporate_pct"], g["absentee_pct"], g["entity_sales_last_3yr"],
+             g["homestead_pct"])
+            for g in con.execute("SELECT * FROM condo_group")]
+    con.executemany(
+        f"INSERT OR REPLACE INTO target_snapshot VALUES ({','.join('?' * SNAPSHOT_COLS)})", rows)
+    con.commit()
+    return len(rows)
+
+
 # ── pass 3: score ──────────────────────────────────────────────────────────
 def curve(value, lo, hi):
     """Linear 0-100 between lo and hi."""
@@ -282,8 +335,9 @@ def log_curve(value, lo, hi):
     return round(math.log(value / lo) / math.log(hi / lo) * 100, 1)
 
 
-def score_all(con, matches):
+def score_all(con, matches, prior=None):
     print("pass 3: scoring ...")
+    prior = prior or {}
     con.execute("DELETE FROM target")
     w = CFG["score_weights"]
     ac, sc, cc = CFG["age_curve"], CFG["scale_curve"], CFG["concentration_curve"]
@@ -332,6 +386,7 @@ def score_all(con, matches):
             None, None, None, None, None, None, 0, None,
             g["lon"], g["lat"],
             g["homestead_pct"], s_resist,
+            *movement(g, prior.get(key)),
         ))
 
     con.executemany(f"INSERT INTO target VALUES ({','.join('?' * TARGET_COLS)})", rows)
@@ -348,16 +403,24 @@ def main():
     if not con.execute("SELECT COUNT(*) FROM dbpr_association").fetchone()[0]:
         raise SystemExit("dbpr_association is empty -- run scripts/prospect/ingest_dbpr.py first")
 
-    for table, expect in (("condo_group", GROUP_COLS), ("target", TARGET_COLS)):
+    for table, expect in (("condo_group", GROUP_COLS), ("target", TARGET_COLS),
+                          ("target_snapshot", SNAPSHOT_COLS)):
         actual = len(con.execute(f"PRAGMA main.table_info({table})").fetchall())
         if actual != expect:
             raise SystemExit(
                 f"{table} has {actual} columns but this script writes {expect}. "
                 f"Update the constant and the row tuple together.")
 
+    roll_year = CFG["roll_year"]
+    # Read the previous vintage BEFORE this run writes its own snapshot.
+    prior = prior_snapshot(con, roll_year)
+    print(f"prior vintage: {len(prior):,} buildings to compare against")
+
     build_groups(con)
     matches = match(con)
-    n = score_all(con, matches)
+    n = score_all(con, matches, prior)
+    snaps = write_snapshot(con, roll_year, CFG.get("roll_type", ""))
+    print(f"snapshot: {snaps:,} rows written for roll {roll_year}")
     log_ingest(con, "build_targets", started,
                datetime.now().isoformat(timespec="seconds"), n, "derived rebuild")
 

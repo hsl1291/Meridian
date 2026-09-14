@@ -75,13 +75,18 @@ SORTS = {
     "concentration": "top_owner_pct DESC", "mail": "top_mail_pct DESC",
     "absentee": "absentee_pct DESC", "name": "condo_name ASC",
     "value": "jv_per_unit ASC",
+    # Movement, not level. NULLS LAST so buildings with no prior vintage -- which
+    # is "no comparison available", not "no change" -- sort below real movement
+    # instead of above it.
+    "assembling": "conc_delta DESC NULLS LAST",
+    "consolidating": "owners_delta ASC NULLS LAST",
 }
 
 
 def _target_filter(q: str, city: str, min_units: int, max_units: int,
                    min_age: int, min_score: float, min_conc: float,
                    milestone_only: bool, matched_only: bool,
-                   unverified_only: bool) -> tuple[str, list]:
+                   unverified_only: bool, assembling_only: bool = False) -> tuple[str, list]:
     where, params = ["units_nal BETWEEN ? AND ?"], [min_units, max_units]
     if q:
         where.append("(condo_name LIKE ? OR addr_primary LIKE ? OR top_owner LIKE ?)")
@@ -104,6 +109,8 @@ def _target_filter(q: str, city: str, min_units: int, max_units: int,
         where.append("match_method <> 'unmatched'")
     if unverified_only:
         where.append("stage2_verified = 0")
+    if assembling_only:
+        where.append("assembly_flag = 1")
     return " AND ".join(where), params
 
 
@@ -113,11 +120,12 @@ def targets(
     min_units: int = 0, max_units: int = 100000,
     min_age: int = 0, min_score: float = 0, min_conc: float = 0,
     milestone_only: bool = False, matched_only: bool = False,
-    unverified_only: bool = False, sort: str = "score",
+    unverified_only: bool = False, assembling_only: bool = False,
+    sort: str = "score",
 ):
     clause, params = _target_filter(q, city, min_units, max_units, min_age,
                                     min_score, min_conc, milestone_only,
-                                    matched_only, unverified_only)
+                                    matched_only, unverified_only, assembling_only)
     order = SORTS.get(sort, SORTS["score"])
     con = db()
     try:
@@ -136,7 +144,7 @@ def targets_geojson(
     min_units: int = 0, max_units: int = 100000,
     min_age: int = 0, min_score: float = 0, min_conc: float = 0,
     milestone_only: bool = False, matched_only: bool = False,
-    unverified_only: bool = False,
+    unverified_only: bool = False, assembling_only: bool = False,
 ):
     """Every target matching the current filters, as map points.
 
@@ -146,7 +154,7 @@ def targets_geojson(
     """
     clause, params = _target_filter(q, city, min_units, max_units, min_age,
                                     min_score, min_conc, milestone_only,
-                                    matched_only, unverified_only)
+                                    matched_only, unverified_only, assembling_only)
     con = db()
     try:
         rows = con.execute(
@@ -604,6 +612,83 @@ def condo_comps(group_key: str, radius_mi: float = Query(DEFAULT_RADIUS, ge=0.25
     return {"summary": doc["sales_summary"],
             "in_building": doc["sales_in_building"][:40],
             "nearby": doc["comps"], "radius_mi": radius_mi}
+
+
+@router.get("/api/movement")
+def movement_digest(limit: int = Query(10, ge=1, le=50)):
+    """What changed between the two most recent roll vintages.
+
+    The screen's other views answer "what does this building look like now".
+    This one answers "what moved", which is the question a second vintage makes
+    askable at all -- and the reason build_targets no longer deletes its history.
+    """
+    con = db()
+    try:
+        years = [r[0] for r in con.execute(
+            "SELECT DISTINCT roll_year FROM target_snapshot ORDER BY roll_year DESC LIMIT 2")]
+        if len(years) < 2:
+            return {"comparable": False, "vintages": years,
+                    "note": "Only one roll vintage is held, so there is nothing to compare "
+                            "yet. A second becomes available the next time a new tax roll is "
+                            "ingested and build_targets.py is re-run."}
+        now, prior = years[0], years[1]
+        counts = con.execute(
+            "SELECT COUNT(*) n, "
+            "SUM(CASE WHEN assembly_flag=1 THEN 1 ELSE 0 END) assembling, "
+            "SUM(CASE WHEN conc_delta > 0 THEN 1 ELSE 0 END) concentrating, "
+            "SUM(CASE WHEN conc_delta < 0 THEN 1 ELSE 0 END) dispersing, "
+            "SUM(CASE WHEN top_owner_changed=1 THEN 1 ELSE 0 END) changed_hands "
+            "FROM target WHERE conc_delta IS NOT NULL").fetchone()
+        cols = ("group_key, condo_name, addr_primary, city, units_nal, "
+                "top_owner, top_owner_pct, conc_delta, owners_delta, "
+                "top_owner_changed, assembly_flag, score")
+        movers = [dict(r) for r in con.execute(
+            f"SELECT {cols} FROM target WHERE conc_delta IS NOT NULL "
+            "ORDER BY conc_delta DESC LIMIT ?", (limit,))]
+        assembling = [dict(r) for r in con.execute(
+            f"SELECT {cols} FROM target WHERE assembly_flag=1 "
+            "ORDER BY conc_delta DESC LIMIT ?", (limit,))]
+        return {
+            "comparable": True, "roll_year": now, "prior_roll_year": prior,
+            "compared": counts["n"], "assembling": counts["assembling"],
+            "concentrating": counts["concentrating"], "dispersing": counts["dispersing"],
+            "changed_hands": counts["changed_hands"],
+            "biggest_movers": movers, "newly_assembling": assembling,
+        }
+    finally:
+        con.close()
+
+
+@router.get("/api/target/{group_key}/beneficial")
+def beneficial_owners(group_key: str):
+    """One buyer behind several LLCs, clustered transitively.
+
+    `top_owner_pct` counts units under one owner NAME, which an assembler defeats
+    by holding each unit in its own entity. Every edge here is an auditable rule
+    and carries its evidence, because a false merge fabricates the number this
+    whole tool is ranked on.
+    """
+    from .beneficial import top_beneficial
+    con = db()
+    try:
+        if not con.execute("SELECT 1 FROM target WHERE group_key=?", (group_key,)).fetchone():
+            raise HTTPException(404, "no such condo group")
+        return top_beneficial(con, group_key)
+    finally:
+        con.close()
+
+
+@router.get("/api/target/{group_key}/history")
+def target_history(group_key: str):
+    """Every roll vintage held for this building, oldest first."""
+    con = db()
+    try:
+        rows = [dict(r) for r in con.execute(
+            "SELECT * FROM target_snapshot WHERE group_key=? ORDER BY roll_year",
+            (group_key,))]
+        return {"group_key": group_key, "vintages": len(rows), "snapshots": rows}
+    finally:
+        con.close()
 
 
 # ═══ migration flows ═══════════════════════════════════════════════════════

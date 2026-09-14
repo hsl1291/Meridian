@@ -246,9 +246,54 @@ CREATE TABLE IF NOT EXISTS target (
     -- silently move every building in the app. That is Phase 1.4, and it wants
     -- the labelled set of actual terminations first.
     homestead_pct    REAL,
-    score_resistance REAL
+    score_resistance REAL,
+    -- ── movement, against the previous roll vintage ────────────────────────
+    -- NULL on the first build, and on any building absent from the prior roll.
+    -- That is "no comparison available", which is not the same as "no change".
+    prior_roll_year      INTEGER,
+    conc_delta           REAL,   -- change in max(top_owner_pct, top_mail_pct)
+    owners_delta         INTEGER,-- change in distinct_owners; negative = consolidating
+    corporate_pct_delta  REAL,
+    top_owner_changed    INTEGER,
+    -- Concentration rising while the owner count falls. Either alone is noise;
+    -- together they are somebody buying the building.
+    assembly_flag        INTEGER
 );
 CREATE INDEX IF NOT EXISTS ix_target_score ON target(score DESC);
+CREATE INDEX IF NOT EXISTS ix_target_assembly ON target(conc_delta DESC);
+
+-- ── history ───────────────────────────────────────────────────────────────
+-- build_targets.py opens with DELETE FROM condo_group and DELETE FROM target,
+-- so every rebuild destroyed the prior state and the app could only ever answer
+-- "who owns a lot of this building today" -- never "who is BUYING it".
+--
+-- A building at 45% single-owner has probably already been found by somebody who
+-- knows what they are doing. One that went 6% to 19% since the last roll is the
+-- one to be early on, and the flat screen ranks the first one higher.
+--
+-- One row per building per roll vintage, written on every rebuild and never
+-- deleted. Group-level metrics only: the per-unit roster would be another
+-- 391,210 rows a vintage, and concentration, owner count and corporate share
+-- are enough to see a building being assembled.
+CREATE TABLE IF NOT EXISTS target_snapshot (
+    group_key        TEXT,
+    roll_year        INTEGER,
+    roll_type        TEXT,
+    captured         TEXT,      -- ISO date of the rebuild that wrote this
+    unit_folios      INTEGER,
+    top_owner        TEXT,
+    top_owner_units  INTEGER,
+    top_owner_pct    REAL,
+    top_mail_addr    TEXT,
+    top_mail_pct     REAL,
+    distinct_owners  INTEGER,
+    corporate_pct    REAL,
+    absentee_pct     REAL,
+    entity_sales_last_3yr INTEGER,
+    homestead_pct    REAL,
+    PRIMARY KEY (group_key, roll_year)
+);
+CREATE INDEX IF NOT EXISTS ix_snapshot_year ON target_snapshot(roll_year);
 
 -- Provenance: keeps "is this stale?" answerable.
 CREATE TABLE IF NOT EXISTS ingest_log (
@@ -435,6 +480,12 @@ _ADDED_COLUMNS = [
     ("main", "condo_group", "homestead_pct", "REAL"),
     ("main", "target", "homestead_pct", "REAL"),
     ("main", "target", "score_resistance", "REAL"),
+    ("main", "target", "prior_roll_year", "INTEGER"),
+    ("main", "target", "conc_delta", "REAL"),
+    ("main", "target", "owners_delta", "INTEGER"),
+    ("main", "target", "corporate_pct_delta", "REAL"),
+    ("main", "target", "top_owner_changed", "INTEGER"),
+    ("main", "target", "assembly_flag", "INTEGER"),
 ]
 
 

@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
-  <link rel="stylesheet" href="styles.css?v=69" />
+  <link rel="stylesheet" href="styles.css?v=70" />
   <link rel="stylesheet" href="shell.css?v=2" />
 </head>
 <body>
@@ -270,6 +270,12 @@
 
     <!-- ── condo takeovers ── -->
     <div class="ws-pane" id="ws-records" hidden>
+      <details class="ws-section" id="move-panel">
+        <summary>What moved since the last roll
+          <span class="hint" title="Concentration and owner-count change between the two most recent tax-roll vintages. Needs two: the first build of a new install has nothing to compare against.">?</span></summary>
+        <div id="move-body"><p class="msg">Open to compare roll vintages.</p></div>
+      </details>
+
       <div class="ws-filters">
         <input type="search" id="t-q" placeholder="Condo, address or owner" />
         <select id="t-city"><option value="">All cities</option></select>
@@ -277,8 +283,12 @@
         <label class="inl">Age ≥ <input type="number" id="t-age" value="30" min="0" step="5" /></label>
         <label class="inl">Top owner ≥ <input type="number" id="t-conc" value="0" min="0" max="100" step="5" />%</label>
         <label class="chk"><input type="checkbox" id="t-milestone" /> Milestone due</label>
+        <label class="chk"><input type="checkbox" id="t-assembling" /> Being assembled
+          <span class="hint" title="Concentration up two points or more since the previous roll AND the owner count falling. Either alone is noise — one sale moves concentration, and owner counts drift with data cleanup — but together they mean somebody is buying the building. Needs two roll vintages.">?</span></label>
         <select id="t-sort">
           <option value="score">Sort: score</option>
+          <option value="assembling">Sort: concentration gained</option>
+          <option value="consolidating">Sort: owners lost</option>
           <option value="concentration">Sort: largest owner</option>
           <option value="mail">Sort: shared mailing</option>
           <option value="units">Sort: units</option>
@@ -562,6 +572,6 @@
 <script src="zoning3d.js?v=1"></script>
 <script src="charts.js?v=4"></script>
 <script src="app.js?v=77"></script>
-<script src="workspace.js?v=6"></script>
+<script src="workspace.js?v=8"></script>
 </body>
 </html>

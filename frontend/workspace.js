@@ -64,7 +64,7 @@
     }
 
     if (showMap) requestAnimationFrame(() => map.resize());
-    if (next === 'records' && !recordsLoaded) { recordsLoaded = true; initRecords(); }
+    if (next === 'records' && !recordsLoaded) { recordsLoaded = true; initRecords(); wireMovement(); }
     if (next === 'markets' && !marketsLoaded) { marketsLoaded = true; initMarkets(); wireNationalFlows(); }
     history.replaceState(null, '', next === 'map' ? location.pathname + location.hash : '#mode=' + next);
   }
@@ -89,6 +89,7 @@
       min_age: el('t-age').value || 0,
       min_conc: el('t-conc').value || 0,
       milestone_only: el('t-milestone').checked ? 'true' : '',
+      assembling_only: el('t-assembling').checked ? 'true' : '',
     };
   }
   function tParams(extra) {
@@ -115,6 +116,11 @@
       if (t.milestone_due) flags.push('<span class="tag warm">milestone</span>');
       if ((t.top_owner_pct || 0) >= 50) flags.push('<span class="tag hot">bulk owner</span>');
       if (t.stage2_verified) flags.push('<span class="tag cool">verified</span>');
+      // Movement, where there is a prior vintage to compare against. No tag at
+      // all when there is not -- an absent comparison is not a flat one.
+      if (t.assembly_flag) flags.push(`<span class="tag hot">assembling ${signed(t.conc_delta, 1)}pt</span>`);
+      else if (t.conc_delta != null && Math.abs(t.conc_delta) >= 2)
+        flags.push(`<span class="tag">${signed(t.conc_delta, 1)}pt owner</span>`);
       return `<tr data-k="${esc(t.group_key)}" data-lon="${t.lon ?? ''}" data-lat="${t.lat ?? ''}">
         <td><div class="nm">${esc(t.condo_name || t.addr_primary || '—')}</div>
             <div class="sub">${esc([t.addr_primary, t.city].filter(Boolean).join(' · '))} ${flags.join(' ')}</div></td>
@@ -200,7 +206,7 @@
     for (const id of ['t-q', 't-units', 't-age', 't-conc']) {
       el(id).addEventListener('input', () => tRefresh(true));
     }
-    for (const id of ['t-city', 't-sort', 't-milestone']) {
+    for (const id of ['t-city', 't-sort', 't-milestone', 't-assembling']) {
       el(id).addEventListener('change', () => tRefresh(true));
     }
     for (const th of document.querySelectorAll('th[data-tsort]')) {
@@ -310,6 +316,7 @@
       <div id="t-econ"><p class="msg">Estimating…</p></div>
 
       <h3>Ownership concentration</h3>
+      <div id="t-benef"><p class="msg">Clustering owners…</p></div>
       <div id="t-conc"></div>
       <table class="mini"><thead><tr><th>Owner</th><th>Mailing</th><th class="n">Units</th><th class="n">Share</th></tr></thead>
         <tbody>${owners}</tbody></table>
@@ -389,6 +396,84 @@
     wireCapacity(key);
     loadEconomics(key);
     drawConcentration(d);
+    loadBeneficial(key);
+  }
+
+  // What moved. The rest of the screen answers "what does this building look
+  // like now"; this answers "what changed", which is the question a second roll
+  // vintage makes askable at all.
+  let moveLoaded = false;
+  function wireMovement() {
+    const panel = el('move-panel');
+    if (!panel) return;
+    panel.addEventListener('toggle', async () => {
+      if (!panel.open || moveLoaded) return;
+      moveLoaded = true;
+      const box = el('move-body');
+      box.innerHTML = '<p class="msg">Comparing vintages…</p>';
+      let d;
+      try { d = await fetchJSON('/api/movement?limit=10', { timeoutMs: 30000 }); }
+      catch (e) { moveLoaded = false; box.innerHTML = '<p class="msg">Movement unavailable.</p>'; return; }
+      if (!d.comparable) { box.innerHTML = `<div class="note">${esc(d.note)}</div>`; return; }
+
+      const rows = (list) => list.map((t) => `<tr data-k="${esc(t.group_key)}">
+        <td><div class="nm">${esc(t.condo_name || t.addr_primary || '—')}</div>
+            <div class="sub">${esc(t.city || '')} · ${fmt(t.units_nal)} units</div></td>
+        <td class="n">${signed(t.conc_delta, 1)}pt</td>
+        <td class="n">${t.owners_delta == null ? '—' : signed(t.owners_delta, 0)}</td>
+        <td class="n">${pc(t.top_owner_pct, 1)}</td></tr>`).join('');
+      const table = (list) => `<table class="mini"><thead><tr><th>Building</th>
+        <th class="n">Concentration</th><th class="n">Owners</th><th class="n">Now</th></tr></thead>
+        <tbody>${rows(list)}</tbody></table>`;
+
+      box.innerHTML = `
+        <div class="cells">
+          <div><b>${fmt(d.assembling)}</b><span>Being assembled</span></div>
+          <div><b>${fmt(d.concentrating)}</b><span>Concentrating</span></div>
+          <div><b>${fmt(d.dispersing)}</b><span>Dispersing</span></div>
+          <div><b>${fmt(d.changed_hands)}</b><span>New largest owner</span></div>
+        </div>
+        <div class="note">Roll ${esc(String(d.roll_year))} against ${esc(String(d.prior_roll_year))},
+          across ${fmt(d.compared)} buildings present in both.</div>
+        ${d.newly_assembling.length ? `<h4>Concentration up, owner count down</h4>${table(d.newly_assembling)}` : ''}
+        <h4>Biggest movers</h4>${table(d.biggest_movers)}`;
+
+      for (const tr of box.querySelectorAll('tr[data-k]')) {
+        tr.style.cursor = 'pointer';
+        tr.addEventListener('click', () => selectTarget(tr.dataset.k, true));
+      }
+    });
+  }
+
+  // One buyer behind several LLCs. top_owner_pct counts units under one owner
+  // NAME, which an assembler defeats by holding each unit in its own entity.
+  async function loadBeneficial(key) {
+    const box = el('t-benef');
+    if (!box) return;
+    let b;
+    try { b = await fetchJSON(`/api/target/${encodeURIComponent(key)}/beneficial`); }
+    catch (e) { box.innerHTML = ''; return; }
+    const top = b.groups && b.groups[0];
+    if (!top || top.member_count < 2) {
+      box.innerHTML = `<div class="note">No owner here holds units under more than one name.
+        The largest single owner is ${pc(b.single_name_top_pct, 1)}.</div>`;
+      return;
+    }
+    const rules = { shared_mailing: 'a shared mailing address', name_series: 'a name series' };
+    const seen = [...new Set(top.evidence.map((e) => rules[e.rule] || e.rule))];
+    box.innerHTML = `
+      <div class="note warn"><b>${pc(top.pct, 1)} under one buyer</b>, across
+        ${top.member_count} owner names — against ${pc(b.single_name_top_pct, 1)} for the largest
+        single name. Linked by ${esc(seen.join(' and '))}.</div>
+      <table class="mini"><thead><tr><th>Owner name</th><th class="n">Linked by</th></tr></thead>
+        <tbody>${top.members.map((m) => {
+          const why = top.evidence.filter((e) => e.a === m || e.b === m)
+            .map((e) => esc(e.evidence)).join(', ');
+          return `<tr><td>${esc(m)}</td><td class="n dim">${why || '—'}</td></tr>`;
+        }).join('')}</tbody></table>
+      <div class="note">Every link is one rule with its evidence beside it, so a cluster can be
+        disbelieved on its specifics. A false merge would inflate the concentration score, which is
+        the number this screen is ranked on.</div>`;
   }
 
   // Ownership as one bar: whether a building is already being assembled should
