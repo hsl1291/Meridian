@@ -98,22 +98,35 @@ the merge had left behind.
 **7 days.** The stage-1 score is age, scale, concentration, absentee — the four
 things easiest to compute from the roll, not the four that predict a termination.
 
-### 1.1 Homestead status *(2 days, and a dependency for Phase 2)*
+### 1.1 Homestead status  ✅ done
 
-FS 718.117 needs 80% approval **and no more than 5% objecting**. The screen
-models nothing on the objection side. `absentee_pct` is standing in for it, but
-absentee is a mailing-address comparison — it puts a Brickell landlord who owns
-three units and a retiree in Ohio in the same bucket, when the legal fact that
-matters is homestead exemption.
+FS 718.117 needs 80% approval **and no more than 5% objecting**, and the screen
+had nothing on the objection side. `absentee_pct` was standing in, but absentee
+is a mailing-address comparison — it puts a Brickell landlord who owns three
+units and a retiree in Ohio in the same bucket. Homestead is the legal fact: it
+marks the owner-occupant who objects, and whose payout floor is protected.
 
-This field does double duty and that is why it is first. A homesteaded
-owner-occupant is the one who objects **and** the one whose payout floor is
-protected — so the same column drives the resistance term in the score and the
-floor in the buyout model. The FDOR NAL carries homestead exemption fields per
-parcel; `ingest_nal.py` reads twenty columns and drops them.
+`homestead` and `homestead_val` on the unit, `homestead_pct` on the group and the
+target, `score_resistance` alongside.
 
-Add `homestead` per unit, `homestead_pct` per group, a `score_resistance` term,
-and expect the top hundred to reorder substantially. That is the point.
+**The column name is resolved from the header, not hardcoded.** The roll cannot
+be downloaded from this environment, and the NAL layout is revised between roll
+years — a name that silently stopped matching would leave every unit reading
+*not homesteaded*, which is worse than not having the field at all, because
+nothing downstream could tell that apart from a building where nobody is. So
+candidates are tried in order, the run prints which one matched, and unknown is
+stored as `NULL` rather than `0`. The share is then computed over units the roll
+can answer for: two homesteaded of two knowable is 100%, not 50%.
+
+> **Confirm the candidate list against a real roll** —
+> `python scripts/prospect/ingest_nal.py --show-header` prints the roll's columns
+> and says which candidates are present. This is the one part of 1.1 that could
+> not be verified here.
+
+`score_resistance` is stored and sortable but **deliberately not folded into
+`score`** — a fifth term without re-derived weights would silently move every
+building in the app. That is 1.4. A test asserts the weights are still the
+original four.
 
 ### 1.2 Milestone inspection and structural distress *(3-4 days)*
 
@@ -156,70 +169,53 @@ rather than become a model; the README is right about that.
 
 ---
 
-## Phase 2 — what the buyout costs
+## Phase 2 — what the buyout costs  ✅ done
 
-**6 days.** The drawer shows every input to this number and never computes it.
+**Scoped to comps only.** No redevelopment residual, no margin, no breakeven —
+those need a revenue per new unit that is nowhere in this data, and an invented
+one would be the least reliable figure in the app sitting exactly where the eye
+lands. The question is only what the units cost.
 
-What is already on screen at `workspace.js:245-380`: units, year built, age,
-declaration year, assessed and land value per unit, top-owner share, every owner
-with their unit count and percentage, shared mailing addresses, in-building
-single-unit median, bulk-deed median per unit, median $/SF, and nearby
-buildings within two miles. The gap is arithmetic, not data.
+`backend/prospect/economics.py`, and `GET /api/economics/{group_key}` with the
+assumptions as query parameters so a sensitivity pass is three URL changes.
 
-### 2.1 Per-unit valuation *(2 days)*
+Each unit is priced at a $/SF against **its own living area** — the difference
+between a defensible per-unit figure and a building-wide average that would
+price a 500sf studio and a 2,000sf penthouse identically. Where that is
+unavailable it steps down through the building median, nearby comps, then
+assessed value, and every unit carries the step it landed on, so the estimate
+reports its own quality: *"68% in-building comps, 22% nearby, 10% assessed."*
 
-`memo.gather()` already pulls `tot_lvg_area` alongside every recorded sale and
-computes a median $/SF. Nothing multiplies them back out. Per-unit fair market
-value is that $/SF against each unit's own living area — which is the difference
-between a building-wide average and a number you can defend unit by unit.
+The price-to-assessment ratio is **measured from the building's own sales**
+rather than assumed. A statewide constant would be wrong per building and
+unfalsifiable; this one is checkable against the rows it came from.
 
-New `backend/prospect/economics.py`, with an explicit basis on every unit so the
-estimate can report its own quality:
+### Two defects the tests found
 
-| Basis | When it applies |
-|---|---|
-| `comp_psf` | unit has living area, building has recent single-unit sales |
-| `building_median` | unit has no living area — fall back to the building's median per unit |
-| `nearby_psf` | building has no recent single-unit sales — use the comp set within radius |
-| `assessed_ratio` | neither — assessed value times a stated ratio, flagged as weakest |
+**The comp engine was collapsing separate sales into phantom bulk deeds.**
+`building_sales` grouped folios on `(year, price)`, so three units that each
+genuinely sold for $440,000 in one year read as *one* $440,000 deed conveying
+three units — and priced at $146,667 each. A threefold understatement, in the
+direction that makes a building look cheap. Identical round prices are not
+exotic: a tower of identical floorplans, or the nominal $10 considerations on
+quitclaim transfers, collide exactly this way.
 
-**Assessed value is not market value and must never be used as though it were.**
-Florida just value runs below market, and Save Our Homes caps compress
-homesteaded units further — which biases exactly the units whose payout floor
-matters most. JV is a floor indicator here, nothing more.
+OR book/page **is** the recorded instrument, is already on the roll and already
+ingested, and is now the grouping key. `(year, price)` stays as the fallback and
+its cost is pinned by a test. The engine also moved out of `memo.gather()` so the
+memo and the buyout estimate cannot drift into quoting different prices for the
+same building.
 
-### 2.2 The waterfall *(2 days)*
+**Shared mailing counted as control too eagerly.** With both concentration
+percentages at zero, an arbitrary single mailing address marked a unit as already
+owned. It now requires the address to cover more than one unit and to be the
+stronger of the two signals.
 
-```
-  units already controlled          no buyout
-+ units to acquire  x  FMV          from 2.1
-+ homestead floor where it binds    needs 1.1
-+ holdout premium on the tail       the last 10% is where deals die
-= total acquisition basis
-- redevelopment residual            capacity.py best case x sellout/unit
-= margin, and the unit count it breaks even at
-```
+### What it still cannot see
 
-Expose it as `/api/economics/{group_key}` with the assumptions as query
-parameters, so a sensitivity pass is three URL changes rather than a rebuild.
-Mortgage balances are the one input not in the repo — see Phase 7.2.
-
-### 2.3 Surface it, and sort on it *(2 days)*
-
-A new drawer section above Sales comparables: the number, the waterfall, and the
-assumption inputs inline. Then the part that changes how the tool is used —
-**make estimated basis per unit and estimated margin sortable columns in the main
-table.** Ranking 6,160 buildings by deal economics rather than by screen score is
-a different tool, and it falls out of 2.1 almost for free.
-
-Print the basis mix next to every estimate: *"68% of units valued from
-in-building comps, 22% nearby, 10% assessed ratio."* An estimate that will not
-say how it was built is not a screening figure, it is a guess with a dollar sign.
-
-> Screening estimate, not an appraisal. Have counsel review the 718.117 logic
-> before it drives a decision, and have `economics.py` print the subsection it is
-> applying next to each figure — the way `capacity.py` already carries a `basis`
-> string — refusing to produce a number it cannot cite.
+Mortgages and liens, which the tax roll does not carry (Phase 7.2), and the
+statutory payout floor for homestead owners, which needs 1.1's data on a real
+roll. Every estimate prints both limits.
 
 ---
 
@@ -587,8 +583,8 @@ of the coastal counties.
 
 ```
 Phase 0  ██                              1d   DONE
-Phase 1  ██████████████                  7d   1.1 gates Phase 2
-Phase 2  ████████████                    6d   what the buyout costs
+Phase 1  ██████████████                  7d   1.1 DONE
+Phase 2  ████████                        4d   DONE (comps only)
 Phase 3  ████████████                    6d   the map: colour, intensity, 3D
 Phase 4  ████████████████                8d   charts, and the memo's print bugs
 Phase 5  ██████████████                  7d   where the population is going
@@ -613,24 +609,37 @@ valuation, which together turn the drawer from a fact sheet into an estimate.
 
 ---
 
-## Open questions
+## Answered
 
-1. **Is this a personal tool or a product?** Everything in Phase 8, and most of
-   Portability, is only worth doing for the second. The install story — desktop
-   shortcut, start at logon, self-heal task — reads personal; the Dockerfile
-   reads product.
-2. **Is there a labelled set of actual terminations?** Miami-Dade terminations
-   since 2018 are a matter of record. Twenty of them would turn the score from
-   defensible judgment into something measurable, and would settle 1.4. They
-   would also give Phase 2 something to check its estimates against.
-3. **What does a sellout assumption come from?** Phase 2's residual needs a
-   revenue per new unit. The nearby comps give resale; new construction in the
-   same submarket does not appear in this data at all. Either it is an input the
-   user supplies, or it needs a source.
-4. **How much does declaration retrieval cost in practice?** If a title company
-   or a Clerk bulk order can produce declarations for the whole shortlist for a
-   few hundred dollars, 7.1 and 7.4 get deprioritised and the money is the
-   better tool.
+**Personal tool, not a product.** Phase 8 (coverage) and the multi-user items —
+pipeline state, watchlist alerts — drop down accordingly. Portability stays only
+for the `_shared_root()` bug, because that one bites a single user on a single
+machine the moment the path is not configured.
+
+**Sellout assumption: show what we have.** Phase 2 is comps only, as built. No
+residual.
+
+**Declaration retrieval cost: dropped.** 7.4's timeboxed Clerk re-test comes off
+the list. The manual path stays, and 7.1 (OCR) still matters because the target
+set is 1965–1990 declarations, which are scans.
+
+**Labelled terminations — you already have them.** DBPR tracks association
+status, and `ingest_dbpr.py` already writes `Primary Status` and
+`Secondary Status` into `dbpr_association` for all 5,456 Dade associations.
+Nothing in the app has ever read those two columns. One query against your
+existing database:
+
+```sql
+SELECT primary_status, secondary_status, COUNT(*) n
+FROM dbpr_association GROUP BY 1, 2 ORDER BY n DESC;
+```
+
+Whatever that returns for terminated or dissolved associations, joined back to
+`target` on `project_number`, is the labelled set 1.4 needs — at zero collection
+cost. I could not run it from here: this environment reaches GitHub and nothing
+else, so `floridarevenue.com`, DBPR and the Miami-Dade open data portal are all
+blocked. Send me the output and 1.4 becomes measurable rather than a judgment
+call.
 
 ---
 
