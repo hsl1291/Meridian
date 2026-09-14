@@ -37,6 +37,18 @@ RAW = Path(__file__).resolve().parents[2] / "data" / "raw" / "dade_nal_2026p.zip
 CONDO_UC = {"004"}          # FDOR use code for condominium
 BATCH = 20_000
 
+# Homestead exemption. Resolved from the header rather than hardcoded, because
+# the NAL layout is revised between roll years and a column name that silently
+# stops matching would leave every unit reading "not homesteaded" -- which is a
+# worse failure than not having the field at all, since nothing downstream could
+# tell the difference. Candidates are tried in order; whichever resolves is
+# printed, and if none do the column stays NULL and the run says so.
+#
+# These are VALUE columns: a unit is homesteaded when its homestead value is
+# above zero. Confirm against the header of the roll you actually have --
+# `--show-header` prints it.
+HOMESTEAD_CANDIDATES = ("JV_HMSTD", "AV_HMSTD", "HMSTD_VAL", "JV_HOMESTEAD")
+
 
 def download(force=False):
     if RAW.exists() and not force:
@@ -66,6 +78,14 @@ def rows_from_zip():
         missing = [n for n in need if n not in ix]
         if missing:
             raise SystemExit(f"NAL header is missing expected columns: {missing}")
+
+        hmstd_col = next((c for c in HOMESTEAD_CANDIDATES if c in ix), None)
+        if hmstd_col:
+            print(f"  homestead resolved to column {hmstd_col!r}")
+        else:
+            print(f"  ! no homestead column found (tried {', '.join(HOMESTEAD_CANDIDATES)}).")
+            print(f"    homestead stays NULL -- which reads as 'unknown', not 'no'.")
+            print(f"    Run with --show-header to see what this roll actually carries.")
 
         def g(row, key):
             v = row[ix[key]].strip().strip('"')
@@ -114,6 +134,11 @@ def rows_from_zip():
                 num(row, "SALE_PRC1"), integer(row, "SALE_YR1"),
                 g(row, "OR_BOOK1"), g(row, "OR_PAGE1"), g(row, "S_LEGAL"),
                 1 if is_entity(owner) else 0, absentee, COUNTY,
+                # NULL, not 0, when the roll carries no resolvable exemption
+                # column: "we could not tell" and "not homesteaded" are different
+                # facts and the objection model depends on which one it is.
+                *( (1 if (hv := num(row, hmstd_col)) and hv > 0 else 0, hv)
+                   if hmstd_col else (None, None) ),
             )
         print(f"  scanned {total:,} NAL rows")
 
@@ -122,16 +147,29 @@ def rows_from_zip():
 # a `county` column because the FDOR roll is published per county; this script
 # loads Dade, so every row is stamped with it.
 COUNTY = "DADE"
-COLS = 26
+COLS = 28
 INSERT = f"INSERT OR REPLACE INTO nal_condo_unit VALUES ({','.join('?' * COLS)})"
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--refresh", action="store_true", help="re-download the zip")
+    ap.add_argument("--show-header", action="store_true",
+                    help="print the roll's column names and exit -- use this to "
+                         "confirm HOMESTEAD_CANDIDATES against the roll you have")
     args = ap.parse_args()
 
     download(force=args.refresh)
+    if args.show_header:
+        z = zipfile.ZipFile(RAW)
+        with z.open(z.namelist()[0]) as fh:
+            header = next(csv.reader(io.TextIOWrapper(fh, encoding="latin-1", newline="")))
+        print(f"{len(header)} columns:")
+        for i in range(0, len(header), 6):
+            print("   " + "  ".join(f"{c:<16}" for c in header[i:i + 6]))
+        hit = [c for c in HOMESTEAD_CANDIDATES if c in header]
+        print(f"\nhomestead candidates present: {hit or 'NONE -- update HOMESTEAD_CANDIDATES'}")
+        return
     started = datetime.now().isoformat(timespec="seconds")
     t0 = time.time()
 

@@ -47,6 +47,12 @@ THIS_YEAR = datetime.now().year
 # Owners that are the association itself rather than an acquirer.
 ASSOC_RE = re.compile(r"\b(ASSOC|ASSN|ASSOCIATION|HOA|HOMEOWNERS?|CONDOMINIUM)\b")
 
+# Positional inserts, so these must track the schema. Asserted against the live
+# tables in main() rather than trusted -- a silent drift here is the "table has N
+# columns but M values were supplied" that only shows up mid-load.
+GROUP_COLS = 36
+TARGET_COLS = 39
+
 
 def modal(values):
     vals = [v for v in values if v not in (None, "", 0)]
@@ -109,7 +115,7 @@ def build_groups(con):
     units = defaultdict(list)
     q = ("SELECT group_key, owner_name, owner_norm, owner_addr_norm, owner_state, "
          "phy_addr_norm, phy_city, phy_zip, act_yr_blt, jv, lnd_val, tot_lvg_area, "
-         "sale_yr1, is_entity, is_absentee FROM nal_condo_unit")
+         "sale_yr1, is_entity, is_absentee, homestead FROM nal_condo_unit")
     for r in con.execute(q):
         units[r["group_key"]].append(r)
 
@@ -139,6 +145,12 @@ def build_groups(con):
         oos = sum(1 for u in us if (u["owner_state"] or "FL").upper() != "FL")
         corp = sum(1 for u in us if u["is_entity"])
         recent = [u for u in us if u["sale_yr1"] and u["sale_yr1"] >= THIS_YEAR - 3]
+        # Counted over units the roll could actually answer for. A building whose
+        # roll carries no exemption column reports None, not 0% homesteaded --
+        # "we could not tell" must not read as "nobody objects".
+        hs_known = [u for u in us if u["homestead"] is not None]
+        hs_units = sum(1 for u in hs_known if u["homestead"])
+        hs_pct = pct(hs_units, len(hs_known)) if hs_known else None
 
         nm = names.get(key, "")
         rows.append((
@@ -161,10 +173,11 @@ def build_groups(con):
             corp, pct(corp, n),
             len(recent), sum(1 for u in recent if u["is_entity"]),
             *(coords.get(key) or (None, None)),
+            hs_units if hs_known else None, hs_pct,
         ))
 
     con.executemany(
-        f"INSERT INTO condo_group VALUES ({','.join('?' * 34)})", rows)
+        f"INSERT INTO condo_group VALUES ({','.join('?' * GROUP_COLS)})", rows)
     con.commit()
     print(f"  {len(rows):,} condo groups")
     return len(rows)
@@ -295,6 +308,14 @@ def score_all(con, matches):
         s_abs = round(min(100.0, 0.5 * (g["absentee_pct"] or 0)
                           + 0.3 * (g["corporate_pct"] or 0)
                           + 0.2 * (g["out_of_state_pct"] or 0)), 1)
+        # Resistance to termination: the homesteaded owner-occupant is the one
+        # who objects under the 5% rule and the one whose payout floor is
+        # protected. Stored and sortable, but NOT folded into `score` -- adding a
+        # fifth term without re-deriving the weights would silently move every
+        # building in the app. That is Phase 1.4, and it wants the labelled set
+        # of actual terminations first.
+        s_resist = (round(g["homestead_pct"], 1)
+                    if g["homestead_pct"] is not None else None)
         total = round(w["age"] * s_age + w["scale"] * s_scale
                       + w["concentration"] * s_conc + w["absentee"] * s_abs, 2)
 
@@ -310,9 +331,10 @@ def score_all(con, matches):
             total, s_age, s_scale, s_conc, s_abs,
             None, None, None, None, None, None, 0, None,
             g["lon"], g["lat"],
+            g["homestead_pct"], s_resist,
         ))
 
-    con.executemany(f"INSERT INTO target VALUES ({','.join('?' * 37)})", rows)
+    con.executemany(f"INSERT INTO target VALUES ({','.join('?' * TARGET_COLS)})", rows)
     con.commit()
     print(f"  {len(rows):,} targets scored")
     return len(rows)
@@ -325,6 +347,13 @@ def main():
         raise SystemExit("nal_condo_unit is empty -- run scripts/prospect/ingest_nal.py first")
     if not con.execute("SELECT COUNT(*) FROM dbpr_association").fetchone()[0]:
         raise SystemExit("dbpr_association is empty -- run scripts/prospect/ingest_dbpr.py first")
+
+    for table, expect in (("condo_group", GROUP_COLS), ("target", TARGET_COLS)):
+        actual = len(con.execute(f"PRAGMA main.table_info({table})").fetchall())
+        if actual != expect:
+            raise SystemExit(
+                f"{table} has {actual} columns but this script writes {expect}. "
+                f"Update the constant and the row tuple together.")
 
     build_groups(con)
     matches = match(con)

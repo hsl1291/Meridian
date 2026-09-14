@@ -92,7 +92,16 @@ CREATE TABLE IF NOT EXISTS nal_condo_unit (
     s_legal      TEXT,
     is_entity    INTEGER,            -- owner reads as a company/trust
     is_absentee  INTEGER,            -- mailing address != building address
-    county       TEXT                -- FDOR county name; the roll is per-county
+    county       TEXT,               -- FDOR county name; the roll is per-county
+    -- Homestead exemption. FS 718.117 needs 80% approval AND no more than 5%
+    -- objecting, and absentee share was standing in for the objection side --
+    -- but absentee is a mailing-address comparison, which puts a Brickell
+    -- landlord and a retiree in Ohio in the same bucket. Homestead is the legal
+    -- fact: it marks the owner-occupant who objects, and whose payout floor is
+    -- protected. NULL means the roll's exemption column could not be resolved,
+    -- which is not the same as zero (see ingest_nal.py).
+    homestead    INTEGER,
+    homestead_val REAL
 );
 CREATE INDEX IF NOT EXISTS ix_nal_group ON nal_condo_unit(group_key);
 CREATE INDEX IF NOT EXISTS ix_nal_owner ON nal_condo_unit(owner_norm);
@@ -182,7 +191,12 @@ CREATE TABLE IF NOT EXISTS condo_group (
     entity_sales_last_3yr INTEGER,
     -- WGS84, reprojected from the site's land parcel; puts the building on the map
     lon REAL,
-    lat REAL
+    lat REAL,
+    -- Appended after lon/lat on purpose: build_targets.py inserts positionally,
+    -- so new columns go at the end and the row tuple grows at the end too. A
+    -- test asserts the two stay the same length.
+    homestead_units INTEGER,
+    homestead_pct   REAL
 );
 CREATE INDEX IF NOT EXISTS ix_group_addr ON condo_group(addr_primary);
 
@@ -226,7 +240,13 @@ CREATE TABLE IF NOT EXISTS target (
     stage2_verified        INTEGER DEFAULT 0,
     stage2_notes           TEXT,
     lon REAL,
-    lat REAL
+    lat REAL,
+    -- Resistance to termination. Scored and stored, but deliberately NOT folded
+    -- into `score` yet: adding a fifth term without re-deriving the weights would
+    -- silently move every building in the app. That is Phase 1.4, and it wants
+    -- the labelled set of actual terminations first.
+    homestead_pct    REAL,
+    score_resistance REAL
 );
 CREATE INDEX IF NOT EXISTS ix_target_score ON target(score DESC);
 
@@ -409,6 +429,12 @@ def connect(path: Path = DB_PATH, shared_db: Path = SHARED_DB) -> sqlite3.Connec
 # EXISTS will not alter a live table, so they are applied explicitly.
 _ADDED_COLUMNS = [
     ("shared", "nal_condo_unit", "county", "TEXT"),
+    ("shared", "nal_condo_unit", "homestead", "INTEGER"),
+    ("shared", "nal_condo_unit", "homestead_val", "REAL"),
+    ("main", "condo_group", "homestead_units", "INTEGER"),
+    ("main", "condo_group", "homestead_pct", "REAL"),
+    ("main", "target", "homestead_pct", "REAL"),
+    ("main", "target", "score_resistance", "REAL"),
 ]
 
 

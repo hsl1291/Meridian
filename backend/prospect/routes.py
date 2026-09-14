@@ -606,6 +606,44 @@ def condo_comps(group_key: str, radius_mi: float = Query(DEFAULT_RADIUS, ge=0.25
             "nearby": doc["comps"], "radius_mi": radius_mi}
 
 
+# ═══ buyout cost ═══════════════════════════════════════════════════════════
+# What the units cost, from recorded sales. Deliberately NOT a development pro
+# forma: the residual needs a revenue per new unit that is nowhere in this data,
+# and an invented one would be the least reliable figure in the app sitting where
+# the eye lands.
+
+@router.get("/api/economics/{group_key}")
+def economics(group_key: str,
+              holdout_share: float = Query(0.10, ge=0, le=0.5),
+              holdout_premium: float = Query(0.25, ge=0, le=2.0),
+              radius_mi: float = Query(DEFAULT_RADIUS, ge=0.25, le=10)):
+    """Buyout cost for one building, with the assumptions as query parameters so a
+    sensitivity pass is three URL changes rather than a rebuild."""
+    from .economics import estimate
+    from .memo import gather
+
+    con = db()
+    try:
+        # Nearby comps are only consulted when the building itself has no
+        # single-unit sale to price from, so the cost of gathering them is paid
+        # only in the case that needs them.
+        nearby_psf = None
+        try:
+            doc = gather(group_key, con, radius_mi=radius_mi)
+            psfs = [c["sale_psf"] for c in doc.get("comps", []) if c.get("sale_psf")]
+            nearby_psf = sorted(psfs)[len(psfs) // 2] if psfs else None
+        except LookupError:
+            raise
+        except Exception:  # noqa: BLE001 -- comps are optional here, not required
+            nearby_psf = None
+        return estimate(group_key, con, holdout_share=holdout_share,
+                        holdout_premium=holdout_premium, nearby_psf=nearby_psf).as_dict()
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    finally:
+        con.close()
+
+
 # ═══ development capacity ══════════════════════════════════════════════════
 # What can be built on the site, once you have it. Zoning envelope from the
 # shared Miami-Dade layer, unit yield under each Florida path that raises it.

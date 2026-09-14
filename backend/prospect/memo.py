@@ -67,6 +67,98 @@ def _miles(lat1, lon1, lat2, lon2) -> float:
     return 2 * r * math.asin(math.sqrt(a))
 
 
+def building_sales(group_key: str, con) -> dict:
+    """Recorded sales inside one building, grouped into instruments.
+
+    Lifted out of gather() so the memo and the buyout estimate read the same
+    numbers: two comp engines that drift apart is how a memo and a screen end up
+    quoting different prices for the same building.
+
+    Returns {"sales": [...], "summary": {...}, "gaps": [...]}.
+    """
+    out: dict = {}
+    gaps: list[str] = []
+    # ---- comp set 1: recorded sales inside the building ----
+    #
+    # The roll's SALE_PRC1 is the consideration on the *instrument*, and a deed
+    # conveying ten units stamps the same package price on all ten folios. Left
+    # alone that inflates a per-unit median by an order of magnitude — one real
+    # building here shows 148 folios carrying prices up to $4.9M each, which are
+    # really a handful of bulk deeds. So sales are grouped into instruments by
+    # (year, price) and a package's per-unit figure is the consideration divided
+    # by the folios it covers. Only per-unit figures are ever medianed.
+    units_rows = [dict(r) for r in con.execute(
+        "SELECT folio, owner_name, sale_yr1, sale_prc1, tot_lvg_area, jv, "
+        "or_book1, or_page1, is_entity FROM nal_condo_unit "
+        "WHERE group_key=? AND sale_prc1>0 AND sale_yr1 IS NOT NULL "
+        "ORDER BY sale_yr1 DESC, sale_prc1 DESC", (group_key,))]
+    if not units_rows:
+        gaps.append("No recorded sale carries a price for any unit in this building.")
+
+    grouped: dict[tuple, dict] = {}
+    for r in units_rows:
+        # Group by the recorded instrument where the roll names one. OR book/page
+        # IS the instrument, so it separates ten folios on one deed from ten
+        # separate deeds that happen to share a price.
+        #
+        # (year, price) is the fallback, and it is a lossy one: three units that
+        # each sold for $440,000 in the same year collapse into a single
+        # "$440,000 for three units" and price out at a third of what they cost.
+        # Identical round prices are not exotic -- a tower of identical
+        # floorplans, or the nominal $10 considerations on quitclaim transfers,
+        # collide exactly this way.
+        book, page = (r["or_book1"] or "").strip(), (r["or_page1"] or "").strip()
+        k = ("or", book, page) if (book and page) else ("yp", r["sale_yr1"], r["sale_prc1"])
+        g_ = grouped.setdefault(k, {
+            "sale_yr1": r["sale_yr1"], "sale_prc1": r["sale_prc1"],
+            "folios": [], "buyer": r["owner_name"], "is_entity": r["is_entity"],
+            "living_sf": 0.0, "or_book1": r["or_book1"], "or_page1": r["or_page1"],
+        })
+        g_["folios"].append(r["folio"])
+        g_["living_sf"] += r.get("tot_lvg_area") or 0.0
+
+    sales = []
+    for g_ in grouped.values():
+        n = len(g_["folios"])
+        g_["units"] = n
+        g_["bulk"] = n > 1
+        g_["per_unit"] = g_["sale_prc1"] / n
+        g_["psf"] = (g_["sale_prc1"] / g_["living_sf"]) if g_["living_sf"] else None
+        g_["folio"] = g_["folios"][0] + (f" +{n - 1}" if n > 1 else "")
+        sales.append(g_)
+    sales.sort(key=lambda s: (-(s["sale_yr1"] or 0), -s["sale_prc1"]))
+    out["sales"] = sales
+
+    this_year = date.today().year
+    recent = [s for s in sales if (s["sale_yr1"] or 0) >= this_year - 5]
+    singles = [s for s in recent if not s["bulk"]]
+    bulk = [s for s in recent if s["bulk"]]
+    out["summary"] = {
+        "instruments_recorded": len(sales),
+        "units_with_price": len(units_rows),
+        "last5_instruments": len(recent),
+        "last5_units": sum(s["units"] for s in recent),
+        "last5_median_per_unit": _median([s["per_unit"] for s in recent]),
+        "last5_median_psf": _median([s["psf"] for s in recent if s["psf"]]),
+        "single_unit_count": len(singles),
+        "single_unit_median": _median([s["per_unit"] for s in singles]),
+        "bulk_instruments": len(bulk),
+        "bulk_units": sum(s["units"] for s in bulk),
+        "bulk_median_per_unit": _median([s["per_unit"] for s in bulk]),
+        "entity_buy_units": sum(s["units"] for s in recent if s.get("is_entity")),
+        "window": f"{this_year - 5}-{this_year}",
+    }
+    if bulk:
+        gaps.append(
+            f"{len(bulk)} recorded instrument(s) in the last five years convey "
+            f"{sum(s['units'] for s in bulk)} units together. Their per-unit figures "
+            f"are the package price divided by unit count, not separately negotiated "
+            f"prices — price the single-unit sales, not these.")
+
+    out["gaps"] = gaps
+    return out
+
+
 # ── gather ─────────────────────────────────────────────────────────────────
 
 def gather(group_key: str, con: sqlite3.Connection,
@@ -107,70 +199,10 @@ def gather(group_key: str, con: sqlite3.Connection,
         (group_key,))]
 
     # ---- comp set 1: recorded sales inside the building ----
-    #
-    # The roll's SALE_PRC1 is the consideration on the *instrument*, and a deed
-    # conveying ten units stamps the same package price on all ten folios. Left
-    # alone that inflates a per-unit median by an order of magnitude — one real
-    # building here shows 148 folios carrying prices up to $4.9M each, which are
-    # really a handful of bulk deeds. So sales are grouped into instruments by
-    # (year, price) and a package's per-unit figure is the consideration divided
-    # by the folios it covers. Only per-unit figures are ever medianed.
-    units_rows = [dict(r) for r in con.execute(
-        "SELECT folio, owner_name, sale_yr1, sale_prc1, tot_lvg_area, jv, "
-        "or_book1, or_page1, is_entity FROM nal_condo_unit "
-        "WHERE group_key=? AND sale_prc1>0 AND sale_yr1 IS NOT NULL "
-        "ORDER BY sale_yr1 DESC, sale_prc1 DESC", (group_key,))]
-    if not units_rows:
-        doc["gaps"].append("No recorded sale carries a price for any unit in this building.")
-
-    grouped: dict[tuple, dict] = {}
-    for r in units_rows:
-        k = (r["sale_yr1"], r["sale_prc1"])
-        g_ = grouped.setdefault(k, {
-            "sale_yr1": r["sale_yr1"], "sale_prc1": r["sale_prc1"],
-            "folios": [], "buyer": r["owner_name"], "is_entity": r["is_entity"],
-            "living_sf": 0.0, "or_book1": r["or_book1"], "or_page1": r["or_page1"],
-        })
-        g_["folios"].append(r["folio"])
-        g_["living_sf"] += r.get("tot_lvg_area") or 0.0
-
-    sales = []
-    for g_ in grouped.values():
-        n = len(g_["folios"])
-        g_["units"] = n
-        g_["bulk"] = n > 1
-        g_["per_unit"] = g_["sale_prc1"] / n
-        g_["psf"] = (g_["sale_prc1"] / g_["living_sf"]) if g_["living_sf"] else None
-        g_["folio"] = g_["folios"][0] + (f" +{n - 1}" if n > 1 else "")
-        sales.append(g_)
-    sales.sort(key=lambda s: (-(s["sale_yr1"] or 0), -s["sale_prc1"]))
-    doc["sales_in_building"] = sales
-
-    this_year = date.today().year
-    recent = [s for s in sales if (s["sale_yr1"] or 0) >= this_year - 5]
-    singles = [s for s in recent if not s["bulk"]]
-    bulk = [s for s in recent if s["bulk"]]
-    doc["sales_summary"] = {
-        "instruments_recorded": len(sales),
-        "units_with_price": len(units_rows),
-        "last5_instruments": len(recent),
-        "last5_units": sum(s["units"] for s in recent),
-        "last5_median_per_unit": _median([s["per_unit"] for s in recent]),
-        "last5_median_psf": _median([s["psf"] for s in recent if s["psf"]]),
-        "single_unit_count": len(singles),
-        "single_unit_median": _median([s["per_unit"] for s in singles]),
-        "bulk_instruments": len(bulk),
-        "bulk_units": sum(s["units"] for s in bulk),
-        "bulk_median_per_unit": _median([s["per_unit"] for s in bulk]),
-        "entity_buy_units": sum(s["units"] for s in recent if s.get("is_entity")),
-        "window": f"{this_year - 5}-{this_year}",
-    }
-    if bulk:
-        doc["gaps"].append(
-            f"{len(bulk)} recorded instrument(s) in the last five years convey "
-            f"{sum(s['units'] for s in bulk)} units together. Their per-unit figures "
-            f"are the package price divided by unit count, not separately negotiated "
-            f"prices — price the single-unit sales, not these.")
+    _s = building_sales(group_key, con)
+    doc["sales_in_building"] = _s["sales"]
+    doc["sales_summary"] = _s["summary"]
+    doc["gaps"].extend(_s["gaps"])
 
     # ---- comp set 2: comparable buildings nearby ----
     comps: list[dict] = []
