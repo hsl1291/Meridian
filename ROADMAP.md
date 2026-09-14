@@ -389,7 +389,7 @@ pairing underneath them, which is a different job.
 
 ---
 
-## Phase 5 — where the population is going
+## Phase 5 — where the population is going  ✅ done
 
 **7 days.** National scan first, then metro-level flows.
 
@@ -399,11 +399,24 @@ movers earn. It is read once, in `build_markets.py:143`, to compute a
 pipe-joined `top_origins` string and an AGI premium. The `out` direction is
 ingested and never surfaced anywhere in the application.
 
-### 5.1 The flow query layer *(2 days)*
+### 5.1 The flow query layer  ✅ done
 
 Aggregate county-to-county to CBSA-to-CBSA in both directions and net them.
-`ix_flow_dest` covers `(dest_fips, year)` only, so every outbound query is a
-table scan — add the matching `origin_fips` index first.
+
+**Correction: no index was needed.** This roadmap said outbound queries would
+table-scan without an `origin_fips` index. They do not, because the column names
+mean something other than what they say:
+
+| column | what it holds |
+|---|---|
+| `dest_fips` | the county the row is **about** — arrivals for `in`, departures for `out` |
+| `origin_fips` | the counterparty |
+
+So `origin_fips` holds the *destination* on an outbound row, both directions key
+on the same subject, and `ix_flow_dest (dest_fips, year)` already covers every
+query here. `build_markets.py` documents this; reading the names literally gives
+numbers that look plausible and are wrong, which is what most of the flow tests
+are about.
 
     GET /api/flows/national?year=&metric=returns|agi
     GET /api/flows/{cbsa}?direction=in|out|net
@@ -418,7 +431,7 @@ changes how a number should be read:
   are invisible, which biases exactly the populations a relocation plan has to
   deal with.
 
-### 5.2 National scan *(2 days)*
+### 5.2 National scan  ✅ done
 
 Every metro ranked by net household gain and by net AGI gain. The interesting
 part is the gap between the two: a metro gaining households while losing AGI is
@@ -429,12 +442,13 @@ choropleth layer already exists and already shades by national percentile, so
 this is two new columns rather than new map work. Pair it with the scatter from
 4.2: net households on one axis, net AGI on the other, quadrants labelled.
 
-### 5.3 Metro flow view *(3 days)*
+### 5.3 Metro flow view  ✅ done
 
 For one metro: top inbound and outbound corridors, netted, with AGI per
-household on each. Paired horizontal bars — inbound left, outbound right, net in
-the middle — rather than a chord diagram, which looks better in a screenshot and
-reads worse at fifteen corridors.
+household on each. Paired horizontal bars from a shared centre — a chord diagram
+is the photogenic choice and unreadable at fifteen corridors. Both gross flows
+stay visible rather than only the net: a corridor moving 900 households each way
+nets to nothing and is not the same as a corridor nobody uses.
 
 Miami-Dade is the demonstration case and it is already in the README: −67,418
 domestic against +123,835 international in 2024. The app can state those two
@@ -599,7 +613,7 @@ Phase 1  ██████████████                  7d   1.1 DO
 Phase 2  ████████                        4d   DONE (comps only)
 Phase 3  ████████████                    6d   DONE
 Phase 4  ████████████████                8d   DONE
-Phase 5  ██████████████                  7d   where the population is going
+Phase 5  ██████████████                  7d   DONE
 Phase 6  ██████████████████              9d   who is already assembling
 Phase 7  ██████████████████              9d   declarations at scale
 Phase 8  ██████████                      5d   coverage

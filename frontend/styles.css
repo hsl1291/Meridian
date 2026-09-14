@@ -922,3 +922,27 @@ body { display: flex; }
 .chart-legend i.seg-top { background: var(--brand); }
 .chart-legend i.seg-next { background: var(--brand-soft); border: 1px solid var(--border); }
 .chart-legend i.seg-tail { background: var(--bg-panel); border: 1px solid var(--border); }
+/* Corridors. Arrivals carry the accent because they are what a market is being
+   screened for; departures are the counterweight and stay quieter. */
+.chart-seg.in { fill: var(--series-a); }
+.chart-seg.out { fill: var(--series-b); fill-opacity: .78; }
+.chart-legend i.seg-in { background: var(--series-a); }
+.chart-legend i.seg-out { background: var(--series-b); opacity: .78; }
+
+/* Markets: the national migration panel. Two rankings side by side, because the
+   gap between them is the finding — one composite would hide it. */
+.ws-section { border: 1px solid var(--border); border-radius: var(--radius); margin: 0 0 10px; }
+.ws-section > summary {
+  cursor: pointer; padding: 9px 12px; font-size: 12.5px; font-weight: 600;
+  color: var(--text); list-style: none;
+}
+.ws-section > summary::-webkit-details-marker { display: none; }
+.ws-section > summary::before { content: '▸'; margin-right: 7px; color: var(--text-dim); }
+.ws-section[open] > summary::before { content: '▾'; }
+.ws-section > div { padding: 0 12px 12px; }
+.flows-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 0 20px; }
+.flows-cols h4, #flows-national h4 {
+  font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--text-dim); margin: 10px 0 4px;
+}
+@media (max-width: 640px) { .flows-cols { grid-template-columns: 1fr; } }

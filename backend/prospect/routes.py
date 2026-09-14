@@ -606,6 +606,40 @@ def condo_comps(group_key: str, radius_mi: float = Query(DEFAULT_RADIUS, ge=0.25
             "nearby": doc["comps"], "radius_mi": radius_mi}
 
 
+# ═══ migration flows ═══════════════════════════════════════════════════════
+# 109,044 IRS SOI county-to-county rows with income attached to every flow, read
+# until now in exactly one place to build a summary string. The `out` direction
+# was ingested and never surfaced at all.
+
+@router.get("/api/flows/national")
+def flows_national(min_pop: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=500)):
+    """Every metro's net gain in households and in income, ranked separately.
+
+    Two rankings rather than one composite: the gap between them is the finding.
+    A metro gaining households while losing AGI is gaining poor and losing rich,
+    and no single number shows that.
+    """
+    from .flows import national
+    con = db()
+    try:
+        return national(con, min_pop=min_pop, limit=limit)
+    finally:
+        con.close()
+
+
+@router.get("/api/flows/{cbsa}")
+def flows_metro(cbsa: str, limit: int = Query(15, ge=1, le=100)):
+    """One metro's corridors: who feeds it, who drains it, what each carries."""
+    from .flows import metro
+    con = db()
+    try:
+        return metro(con, cbsa, limit=limit)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc))
+    finally:
+        con.close()
+
+
 # ═══ buyout cost ═══════════════════════════════════════════════════════════
 # What the units cost, from recorded sales. Deliberately NOT a development pro
 # forma: the residual needs a revenue per new unit that is nowhere in this data,

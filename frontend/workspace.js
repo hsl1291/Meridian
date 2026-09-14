@@ -65,7 +65,7 @@
 
     if (showMap) requestAnimationFrame(() => map.resize());
     if (next === 'records' && !recordsLoaded) { recordsLoaded = true; initRecords(); }
-    if (next === 'markets' && !marketsLoaded) { marketsLoaded = true; initMarkets(); }
+    if (next === 'markets' && !marketsLoaded) { marketsLoaded = true; initMarkets(); wireNationalFlows(); }
     history.replaceState(null, '', next === 'map' ? location.pathname + location.hash : '#mode=' + next);
   }
 
@@ -691,6 +691,79 @@
     await loadMarkets();
   }
 
+  // 5.2 — the national scan. Loaded on first open rather than with the tab: it
+  // reads every flow row, and most visits to Markets are not about migration.
+  let flowsLoaded = false;
+  function wireNationalFlows() {
+    const panel = el('flows-panel');
+    if (!panel) return;
+    panel.addEventListener('toggle', async () => {
+      if (!panel.open || flowsLoaded) return;
+      flowsLoaded = true;
+      const box = el('flows-national');
+      box.innerHTML = '<p class="msg">Reading 109,000 flows…</p>';
+      let f;
+      try { f = await fetchJSON('/api/flows/national?limit=12&min_pop=250000', { timeoutMs: 60000 }); }
+      catch (e) { flowsLoaded = false; box.innerHTML = '<p class="msg">National flows unavailable.</p>'; return; }
+
+      const table = (rows, valueLabel, value) => `<table class="mini">
+        <thead><tr><th>Metro</th><th class="n">${valueLabel}</th><th class="n">Arrivals' AGI</th></tr></thead>
+        <tbody>${rows.map((r) => `<tr data-c="${esc(r.cbsa)}"><td>${esc(r.name)}</td>
+          <td class="n">${value(r)}</td>
+          <td class="n">${r.in_agi_per_return ? usd(r.in_agi_per_return) : '—'}</td></tr>`).join('')}</tbody></table>`;
+
+      box.innerHTML = `
+        <div class="flows-cols">
+          <div><h4>Gaining households</h4>
+            ${table(f.by_households, 'Net households', (r) => signed(r.net_returns, 0))}</div>
+          <div><h4>Gaining income</h4>
+            ${table(f.by_income, 'Net AGI', (r) => usd(r.net_agi))}</div>
+        </div>
+        ${f.divergent.length ? `<h4>The two disagree here</h4>
+          <div class="note">A metro gaining households while losing AGI is gaining poor and losing
+            rich — and the reverse happens too. No single ranking shows either.</div>
+          ${table(f.divergent, 'Net households', (r) => signed(r.net_returns, 0))}` : ''}
+        ${f.limits.map((l) => `<div class="note warn">${esc(l)}</div>`).join('')}`;
+
+      for (const tr of box.querySelectorAll('tr[data-c]')) {
+        tr.style.cursor = 'pointer';
+        tr.addEventListener('click', () => openMarket(tr.dataset.c));
+      }
+    });
+  }
+
+  // Corridors. The `out` direction has been in the database since the first
+  // ingest and has never been shown anywhere, so until now the app could say a
+  // metro lost 67,418 people domestically and not where a single one went.
+  async function drawFlows(cbsa) {
+    const box = el('m-flows');
+    if (!box) return;
+    let f;
+    try { f = await fetchJSON(`/api/flows/${encodeURIComponent(cbsa)}?limit=8`, { timeoutMs: 30000 }); }
+    catch (e) { box.innerHTML = '<p class="msg">Corridor data unavailable.</p>'; return; }
+    const t = f.totals;
+    const rows = [...f.gaining_from, ...f.losing_to]
+      .sort((a, b) => b.net_returns - a.net_returns)
+      .map((c) => ({
+        label: (c.name || '').split(',')[0].slice(0, 22),
+        inValue: c.in_returns, outValue: c.out_returns,
+        // AGI per arriving household -- the one thing only this source knows.
+        note: c.in_agi_per_return ? usd(c.in_agi_per_return) : '',
+      }));
+    box.innerHTML = `
+      <div class="cells">
+        <div><b>${fmt(t.in_returns)}</b><span>Households in</span></div>
+        <div><b>${fmt(t.out_returns)}</b><span>Households out</span></div>
+        <div><b>${signed(t.net_returns, 0)}</b><span>Net households</span></div>
+        <div><b>${usd(t.net_agi)}</b><span>Net AGI</span></div>
+      </div>
+      ${window.Charts ? Charts.butterfly(rows, { title: 'Migration corridors' }) : ''}
+      <div class="note">Right-hand figures are the average AGI of a household arriving on that
+        corridor — IRS SOI is the only free source that attaches income to movers.
+        ${t.net_returns > 0 && t.net_agi < 0 ? '<b>This metro is gaining households and losing income.</b>' : ''}</div>
+      ${f.limits.map((l) => `<div class="note warn">${esc(l)}</div>`).join('')}`;
+  }
+
   // Components of population change, by year. NOT a stacked area: domestic
   // migration goes negative -- Columbus added 83k people on NEGATIVE domestic
   // migration -- and a stacked area cannot show a negative component without
@@ -799,6 +872,9 @@
       <table class="mini"><tbody>${drivers.map(([l, v]) =>
         `<tr><td style="width:44%">${l}</td><td>${bar(v)}</td></tr>`).join('')}</tbody></table>
 
+      <h3>Where people come from, and where they go</h3>
+      <div id="m-flows"><p class="msg">Loading corridors…</p></div>
+
       <h3>Where arrivals come from</h3>
       <table class="mini"><thead><tr><th>Origin market</th><th class="n">Households/yr</th>
         <th class="n">Avg AGI</th></tr></thead><tbody>${origins}</tbody></table>
@@ -827,6 +903,7 @@
     el('dd-open').addEventListener('click', () => ddReport(cbsa));
     drawComponents(cbsa);
     drawTightness(cbsa);
+    drawFlows(cbsa);
 
     el('j-run').addEventListener('click', async () => {
       const r = await fetch('/api/jobs-impact', {

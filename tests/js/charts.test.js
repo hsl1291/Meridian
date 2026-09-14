@@ -258,3 +258,50 @@ test('labels from the data cannot inject markup in any form', () => {
     + C.scatter([{ x: 1, y: 1, label: bad, highlight: true }]);
   assert.equal(svg.includes('<img'), false);
 });
+
+/* ── butterfly (corridors) ────────────────────────────────────────────── */
+
+test('arrivals and departures share one scale, so the balance is visible', () => {
+  const svg = C.butterfly([{ label: 'Broward', inValue: 1000, outValue: 2000 }], { width: 520 });
+  const paths = [...svg.matchAll(/class="chart-seg (in|out)" d="M([\d.]+) /g)]
+    .map((m) => ({ side: m[1], x: parseFloat(m[2]) }));
+  const inBar = paths.find((p) => p.side === 'in');
+  const outBar = paths.find((p) => p.side === 'out');
+  assert.ok(outBar.x < inBar.x, 'departures sit left of the centre, arrivals right');
+});
+
+test('a bar twice the size is twice the length', () => {
+  const wide = (v) => {
+    const svg = C.butterfly([{ label: 'x', inValue: v, outValue: 0 },
+                             { label: 'y', inValue: 100, outValue: 0 }], { width: 520 });
+    const d = /class="chart-seg in" d="M([\d.]+) [\d.]+ H([\d.]+)/.exec(svg);
+    return parseFloat(d[2]) - parseFloat(d[1]);
+  };
+  const a = wide(50), b = wide(100);
+  assert.ok(Math.abs(b - 2 * a - 4) < 6, `${a} vs ${b}`);
+});
+
+test('a corridor that moves people both ways is not the same as an unused one', () => {
+  // Netting to zero and never being used look identical on a net-only chart.
+  const busy = C.butterfly([{ label: 'a', inValue: 900, outValue: 900 }]);
+  const idle = C.butterfly([{ label: 'a', inValue: 0, outValue: 0 }]);
+  assert.ok(busy.includes('chart-seg in') && busy.includes('chart-seg out'));
+  assert.equal(/chart-seg (in|out)/.test(idle), false);
+});
+
+test('the centre line is drawn as the zero reference', () => {
+  const svg = C.butterfly([{ label: 'a', inValue: 5, outValue: 5 }]);
+  assert.equal((svg.match(/chart-grid zero/g) || []).length, 1);
+});
+
+test('corridors carry a legend and escape their labels', () => {
+  const svg = C.butterfly([{ label: '<b>x</b>', inValue: 1, outValue: 1, note: '<i>y</i>' }]);
+  assert.ok(svg.includes('chart-legend'));
+  assert.ok(svg.includes('Arrivals') && svg.includes('Departures'));
+  assert.equal(svg.includes('<b>'), false);
+  assert.equal(svg.includes('<i>'), false);
+});
+
+test('an empty corridor set says so', () => {
+  assert.ok(C.butterfly([]).includes('No corridors'));
+});

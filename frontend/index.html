@@ -9,7 +9,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
-  <link rel="stylesheet" href="styles.css?v=68" />
+  <link rel="stylesheet" href="styles.css?v=69" />
   <link rel="stylesheet" href="shell.css?v=2" />
 </head>
 <body>
@@ -321,6 +321,12 @@
         <button id="dd-go" class="primary-btn">Build report</button>
         <div class="dd-hits" id="dd-hits" hidden></div>
       </div>
+      <details class="ws-section" id="flows-panel">
+        <summary>Where the population is going
+          <span class="hint" title="IRS SOI county-to-county migration, aggregated to metros. The only free source that attaches income to movers, so households and dollars are ranked separately — a metro can gain one while losing the other.">?</span></summary>
+        <div id="flows-national"><p class="msg">Open to load national migration.</p></div>
+      </details>
+
       <div class="ws-filters">
         <input type="search" id="m-q" placeholder="Filter the list" />
         <select id="m-stage"><option value="">All stages</option></select>
@@ -554,8 +560,8 @@
 
 <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
 <script src="zoning3d.js?v=1"></script>
-<script src="charts.js?v=3"></script>
+<script src="charts.js?v=4"></script>
 <script src="app.js?v=77"></script>
-<script src="workspace.js?v=5"></script>
+<script src="workspace.js?v=6"></script>
 </body>
 </html>

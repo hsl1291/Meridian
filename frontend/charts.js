@@ -185,6 +185,8 @@
       return `M${x} ${y + h} V${y + r} Q${x} ${y} ${x + r} ${y} H${x + w - r} Q${x + w} ${y} ${x + w} ${y + r} V${y + h} Z`;
     if (dir === 'down')
       return `M${x} ${y} V${y + h - r} Q${x} ${y + h} ${x + r} ${y + h} H${x + w - r} Q${x + w} ${y + h} ${x + w} ${y + h - r} V${y} Z`;
+    if (dir === 'left')
+      return `M${x + w} ${y} H${x + r} Q${x} ${y} ${x} ${y + r} V${y + h - r} Q${x} ${y + h} ${x + r} ${y + h} H${x + w} Z`;
     // right
     return `M${x} ${y} H${x + w - r} Q${x + w} ${y} ${x + w} ${y + r} V${y + h - r} Q${x + w} ${y + h} ${x + w - r} ${y + h} H${x} Z`;
   }
@@ -361,6 +363,66 @@
       ${grid}${ctx}${hot}${axisLabels}</svg>`;
   }
 
+
+  /* ── butterfly (paired horizontal bars) ──────────────────────────────── */
+
+  /**
+   * One metro's corridors: arrivals to the right of a centre line, departures to
+   * the left, on a shared scale so the balance is the visible difference.
+   *
+   * A chord diagram is the photogenic choice and the wrong one at fifteen
+   * corridors -- it looks impressive and cannot be read. Two bars from a shared
+   * centre can be read in one pass, and keeping BOTH gross flows visible matters
+   * here: a corridor moving 900 people each way nets to nothing and is not the
+   * same as a corridor nobody uses.
+   *
+   * rows: [{label, inValue, outValue, net, note}]
+   */
+  function butterfly(rows, opts = {}) {
+    const w = opts.width || 520;
+    const rowH = 26;
+    const labelW = opts.labelWidth || 132;
+    const noteW = opts.noteWidth || 64;
+    const fmt = opts.format || ((v) => Math.round(v).toLocaleString());
+    const title = opts.title || 'Corridors';
+    const data = (rows || []).filter((r) => isFinite(r.inValue) || isFinite(r.outValue));
+    if (!data.length) return empty(w, 90, title, 'No corridors to plot.');
+
+    const h = data.length * rowH + 34;
+    const max = Math.max(...data.map((r) => Math.max(r.inValue || 0, r.outValue || 0)), 1);
+    const ax = niceTicks(0, max, 3);
+    const half = (w - labelW - noteW - 8) / 2;
+    const mid = labelW + half;
+    const unit = half / ax.max;
+
+    const grid = ax.ticks.map((t) => {
+      const dx = t * unit;
+      const line = (x) => `<line class="chart-grid${t === 0 ? ' zero' : ''}" x1="${x.toFixed(1)}" y1="14" x2="${x.toFixed(1)}" y2="${h - 20}"/>`;
+      const lab = (x) => `<text class="chart-tick" x="${x.toFixed(1)}" y="${h - 6}" text-anchor="middle">${esc(fmt(t))}</text>`;
+      return t === 0 ? line(mid) + lab(mid)
+        : line(mid - dx) + line(mid + dx) + lab(mid - dx) + lab(mid + dx);
+    }).join('');
+
+    const bars = data.map((r, i) => {
+      const y = 18 + i * rowH + (rowH - 16) / 2;
+      const outW = Math.max(0, (r.outValue || 0) * unit - GAP / 2);
+      const inW = Math.max(0, (r.inValue || 0) * unit - GAP / 2);
+      const outBar = outW ? `<path class="chart-seg out" d="${barPath(mid - GAP / 2 - outW, y, outW, 16, 'left')}">`
+        + `<title>${esc(r.label)} — departures: ${esc(fmt(r.outValue))}</title></path>` : '';
+      const inBar = inW ? `<path class="chart-seg in" d="${barPath(mid + GAP / 2, y, inW, 16, 'right')}">`
+        + `<title>${esc(r.label)} — arrivals: ${esc(fmt(r.inValue))}</title></path>` : '';
+      const note = r.note ? `<text class="chart-value" x="${w - 4}" y="${y + 12}" text-anchor="end">${esc(r.note)}</text>` : '';
+      return outBar + inBar
+        + `<text class="chart-rowlabel" x="${labelW - 10}" y="${y + 12}" text-anchor="end">${esc(r.label)}</text>`
+        + note;
+    }).join('');
+
+    const desc = data.map((r) => `${r.label}: ${fmt(r.inValue || 0)} in, ${fmt(r.outValue || 0)} out`).join('; ');
+    return legend([{ cls: 'seg-out', label: 'Departures' }, { cls: 'seg-in', label: 'Arrivals' }])
+      + `<svg class="chart" viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="${esc(title)}">
+      <title>${esc(title)}</title><desc>${esc(desc)}</desc>${grid}${bars}</svg>`;
+  }
+
   function empty(w, h, title, msg) {
     return `<svg class="chart" viewBox="0 0 ${w} ${h}" role="img" aria-label="${esc(title)}: no data">
       <title>${esc(title)}</title><desc>${esc(msg)}</desc>
@@ -368,7 +430,7 @@
   }
 
   const api = { niceNumber, niceTicks, scale, money, stripPlot, stackedBar,
-                waterfall, divergingBars, scatter, barPath, legend, esc };
+                waterfall, divergingBars, scatter, butterfly, barPath, legend, esc };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.Charts = api;
 }(typeof globalThis !== 'undefined' ? globalThis : this));
