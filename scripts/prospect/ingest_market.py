@@ -26,9 +26,9 @@ from pathlib import Path
 
 import requests
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from backend.db import connect, log_ingest  # noqa: E402
+from backend.prospect.db import connect, log_ingest  # noqa: E402
 
 RAW = ROOT / "data" / "raw"
 UA = {"User-Agent": "Mozilla/5.0 (Prospect market ingest)"}

@@ -914,7 +914,7 @@ def _norm_cnty(s: str) -> str:
 @router.get("/api/broker-directory")
 def broker_directory(county: str | None = Query(None), q: str | None = Query(None, min_length=2),
                      state: str | None = Query(None), limit: int = Query(25, le=100),
-                     btype: str | None = Query(None, regex="^(broker|brokerage)$")):
+                     btype: str | None = Query(None, pattern="^(broker|brokerage)$")):
     """Licensed real-estate brokers. Florida: full public DBPR licensee extract,
     searchable by county and name. Other states: official license-lookup link."""
     st = (state or "FL").upper()

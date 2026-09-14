@@ -10,7 +10,7 @@ BBS is behind paid credits.
 
 Re-download with --refresh; otherwise the cached zip in data/raw is reused.
 
-    venv\\Scripts\\python.exe scripts\\ingest_nal.py [--refresh]
+    venv\\Scripts\\python.exe scripts\\prospect\\ingest_nal.py [--refresh]
 """
 import argparse
 import csv
@@ -23,9 +23,9 @@ from pathlib import Path
 
 import requests
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from backend.db import connect, log_ingest  # noqa: E402
-from backend.norm import (  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from backend.prospect.db import connect, log_ingest  # noqa: E402
+from backend.prospect.norm import (  # noqa: E402
     building_addr, is_entity, normalize_addr, normalize_owner,
 )
 
@@ -33,7 +33,7 @@ NAL_URL = (
     "https://floridarevenue.com/property/dataportal/Documents/PTO%20Data%20Portal/"
     "Tax%20Roll%20Data%20Files/NAL/2026P/Dade%2023%20Preliminary%20NAL%202026.zip"
 )
-RAW = Path(__file__).resolve().parent.parent / "data" / "raw" / "dade_nal_2026p.zip"
+RAW = Path(__file__).resolve().parents[2] / "data" / "raw" / "dade_nal_2026p.zip"
 CONDO_UC = {"004"}          # FDOR use code for condominium
 BATCH = 20_000
 

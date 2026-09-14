@@ -33,15 +33,11 @@ def test_prospect_scripts_parse(script):
     compile(path.read_text(), str(path), "exec")
 
 
-@pytest.mark.xfail(reason="Phase 0.1: the merge moved these into scripts/prospect/ "
-                          "without their path wiring -- ROOT resolves to scripts/ "
-                          "and backend.db is now backend.prospect.db",
-                   strict=True)
 @pytest.mark.parametrize("script", SCRIPTS)
 def test_prospect_scripts_import(script):
-    """Runs each script's module-level code in a subprocess. Expected to fail
-    today; delete the xfail when Phase 0.1 lands and this becomes the check that
-    keeps the README's first-run sequence honest."""
+    """Runs each script's module-level code in a subprocess, the way the README's
+    first-run sequence does. This is the check that was missing when the merge
+    moved these into scripts/prospect/ and left ROOT resolving to scripts/."""
     import subprocess
     path = ROOT / "scripts" / "prospect" / script
     r = subprocess.run(

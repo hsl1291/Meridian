@@ -24,7 +24,7 @@ import time
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
@@ -312,6 +312,78 @@ app.add_middleware(
     allow_methods=["GET"],
     allow_headers=["*"],
 )
+
+# ── unbuilt data store ─────────────────────────────────────────────────────
+# A fresh clone has an empty data/ (see data/README.md) and the Docker image
+# ships map layers only, so the condo and metro routes are querying a store that
+# has not been built. SQLite reports that as OperationalError, which FastAPI
+# turns into a 500 and a traceback -- indistinguishable, from the UI, from the
+# app being broken.
+#
+# Two distinct first-run states, and the fix differs, so they are reported
+# differently rather than collapsed into one "no data" message:
+#   * the shared store is missing entirely -> ATTACH fails before any query
+#   * the store is there but a table has not been built yet
+# Every other OperationalError keeps raising, because those are real faults.
+
+_TABLE_BUILDER = {
+    "nal_condo_unit": "scripts/prospect/ingest_nal.py",
+    "dbpr_association": "scripts/prospect/ingest_dbpr.py",
+    "pa_parcel": "scripts/prospect/ingest_pa.py",
+    "condo_group": "scripts/prospect/build_targets.py",
+    "target": "scripts/prospect/build_targets.py",
+    "ingest_log": "scripts/prospect/build_targets.py",
+    "market": "scripts/prospect/build_markets.py",
+    "county": "scripts/prospect/ingest_market.py",
+    "county_pop": "scripts/prospect/ingest_market.py",
+    "county_permits": "scripts/prospect/ingest_market.py",
+    "county_wage": "scripts/prospect/ingest_market.py",
+    "metro_price": "scripts/prospect/ingest_market.py",
+    "migration_flow": "scripts/prospect/ingest_market.py",
+}
+_NO_SUCH_TABLE = re.compile(r"no such table:\s*([\w.]+)")
+_CANNOT_OPEN = re.compile(r"unable to open database(?: file)?:?\s*(.*)")
+
+
+def unbuilt_detail(exc: BaseException) -> dict | None:
+    """Classify a SQLite error as a first-run state, or None if it is a real
+    fault. Kept separate from the handler so it can be tested without a request."""
+    msg = str(exc)
+    m = _NO_SUCH_TABLE.search(msg)
+    if m:
+        table = m.group(1).split(".")[-1]
+        builder = _TABLE_BUILDER.get(table)
+        return {
+            "state": "table_not_built",
+            "table": table,
+            "builder": builder,
+            "detail": (f"`{table}` has not been built yet."
+                       + (f" Run {builder} to build it." if builder else "")
+                       + " See the README's first-run sequence."),
+        }
+    m = _CANNOT_OPEN.search(msg)
+    if m:
+        path = m.group(1).strip() or "the shared store"
+        return {
+            "state": "shared_store_missing",
+            "path": path,
+            "builder": "scripts/prospect/migrate_to_shared.py",
+            "detail": (f"The shared store could not be opened at {path}. The national "
+                       "market tables and the Miami-Dade parcel roll live outside the "
+                       "app folder; set APPS_SHARED_DB to the shared.db file, or "
+                       "APPS_SHARED to the folder holding it. The map itself does not "
+                       "need it."),
+        }
+    return None
+
+
+@app.exception_handler(sqlite3.OperationalError)
+async def _unbuilt_store(request: Request, exc: sqlite3.OperationalError):
+    info = unbuilt_detail(exc)
+    if info is None:
+        raise exc
+    return JSONResponse(info, status_code=503)
+
 
 # National site-screening (free federal services) + saved-address CSV export.
 try:
@@ -2612,7 +2684,7 @@ def comps_in_radius(
     lon: float = Query(...),
     lat: float = Query(...),
     radius_ft: int = Query(2000, ge=100, le=10560),
-    listing_type: str = Query("sale", regex="^(sale|rent|all)$"),
+    listing_type: str = Query("sale", pattern="^(sale|rent|all)$"),
     limit: int = Query(8, ge=1, le=50),
 ):
     if not COMPS_DB.exists():

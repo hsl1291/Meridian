@@ -43,9 +43,9 @@ from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from backend.db import connect, log_ingest  # noqa: E402
+from backend.prospect.db import connect, log_ingest  # noqa: E402
 
 # Console output carries box-drawing characters; Windows consoles default to
 # cp1252 and raise UnicodeEncodeError on them. The data is already committed by
@@ -56,7 +56,7 @@ for _s in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-CFG = json.loads((ROOT / "config.json").read_text())
+CFG = json.loads((ROOT / "backend" / "prospect" / "config.json").read_text(encoding="utf-8"))
 MC = CFG.get("market", {})
 LATEST_POP_YEAR = 2024
 QCEW_BASE, QCEW_LATEST = 2021, 2024

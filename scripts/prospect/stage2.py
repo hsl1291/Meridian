@@ -18,8 +18,8 @@ brittle scraper that silently breaks, the worklist hands an analyst a prefilled
 search and the extractor does the reading. Drop the PDF in as
 data/declarations/<group_key>.pdf and run --extract.
 
-    venv\\Scripts\\python.exe scripts\\stage2.py --worklist
-    venv\\Scripts\\python.exe scripts\\stage2.py --extract
+    venv\\Scripts\\python.exe scripts\\prospect\\stage2.py --worklist
+    venv\\Scripts\\python.exe scripts\\prospect\\stage2.py --extract
 """
 import argparse
 import json
@@ -27,12 +27,12 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from backend.db import connect  # noqa: E402
-from backend.declaration import analyze  # noqa: E402
+from backend.prospect.db import connect  # noqa: E402
+from backend.prospect.declaration import analyze  # noqa: E402
 
-CFG = json.loads((ROOT / "config.json").read_text())
+CFG = json.loads((ROOT / "backend" / "prospect" / "config.json").read_text(encoding="utf-8"))
 DECL_DIR = ROOT / "data" / "declarations"
 CLERK_SEARCH = "https://onlineservices.miamidadeclerk.gov/officialrecords/StandardSearch"
 

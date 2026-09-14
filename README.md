@@ -282,6 +282,22 @@ venv\Scripts\python.exe install.py
 
 Everything downloads from free public sources — no keys, no accounts.
 
+### Tests
+
+```bat
+venv\Scripts\python.exe -m pip install -r requirements-dev.txt
+venv\Scripts\python.exe -m pytest tests\ -q
+```
+
+They run against an **empty** `data\`, which is the state of a fresh clone, and
+that is the point: the suite asserts the app boots, that every module and every
+script under `scripts\prospect\` imports, and that the data-dependent routes
+report an unbuilt store rather than raising a 500. The zoning tests pin the
+Miami 21 vocabulary — `CS` is Civic Space here and Commercial Service in half
+the other wired cities, so the local dictionary must not leak.
+
+CI runs the same command on every push.
+
 Rebuilding the condo screen from scratch (only needed for a new tax roll):
 
 ```bat

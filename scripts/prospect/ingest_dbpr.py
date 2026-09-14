@@ -22,12 +22,12 @@ from pathlib import Path
 
 import requests
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from backend.db import connect, log_ingest  # noqa: E402
-from backend.norm import building_addr, normalize_name  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from backend.prospect.db import connect, log_ingest  # noqa: E402
+from backend.prospect.norm import building_addr, normalize_name  # noqa: E402
 
 DBPR_URL = "https://www2.myfloridalicense.com/sto/file_download/extracts/Condo_MD.csv"
-RAW = Path(__file__).resolve().parent.parent / "data" / "raw" / "Condo_MD.csv"
+RAW = Path(__file__).resolve().parents[2] / "data" / "raw" / "Condo_MD.csv"
 COUNTY = "Dade"
 
 # "8450 S.W. 133 AVENUE ROAD, MIAMI, FL 33183"

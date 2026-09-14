@@ -18,7 +18,7 @@ Three passes:
 
 Idempotent: drops and rebuilds both derived tables every run.
 
-    venv\\Scripts\\python.exe scripts\\build_targets.py
+    venv\\Scripts\\python.exe scripts\\prospect\\build_targets.py
 """
 import json
 import math
@@ -28,10 +28,10 @@ from collections import Counter, defaultdict
 from datetime import datetime
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-from backend.db import connect, log_ingest  # noqa: E402
-from backend.norm import condo_name_from_legal, normalize_name  # noqa: E402
+from backend.prospect.db import connect, log_ingest  # noqa: E402
+from backend.prospect.norm import condo_name_from_legal, normalize_name  # noqa: E402
 
 # Windows consoles default to cp1252 and raise on the box-drawing characters in
 # the summary output; the data is committed by then, so the crash is cosmetic.
@@ -41,7 +41,7 @@ for _s in (sys.stdout, sys.stderr):
     except (AttributeError, ValueError):
         pass
 
-CFG = json.loads((ROOT / "config.json").read_text())
+CFG = json.loads((ROOT / "backend" / "prospect" / "config.json").read_text(encoding="utf-8"))
 THIS_YEAR = datetime.now().year
 
 # Owners that are the association itself rather than an acquirer.

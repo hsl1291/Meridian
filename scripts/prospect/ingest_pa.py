@@ -20,8 +20,8 @@ from pathlib import Path
 
 import requests
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from backend.db import connect, log_ingest  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from backend.prospect.db import connect, log_ingest  # noqa: E402
 
 QUERY = ("https://services.arcgis.com/8Pc9XBTAsYuxx9Ny/ArcGIS/rest/services/"
          "PaParcelView_gdb/FeatureServer/0/query")

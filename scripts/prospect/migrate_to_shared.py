@@ -17,9 +17,9 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from backend.db import DB_PATH, SHARED_DB, SHARED_TABLES, connect  # noqa: E402
+from backend.prospect.db import DB_PATH, SHARED_DB, SHARED_TABLES, connect  # noqa: E402
 
 
 def _rows(con, db: str, table: str) -> int | None:
