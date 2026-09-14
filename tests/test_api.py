@@ -30,6 +30,12 @@ def test_zoning_overlay_rejects_a_bad_bbox():
     assert client.get("/api/zoning-overlay", params={"bbox": "nope"}).status_code == 400
 
 
+@pytest.mark.skipif((Path(__file__).resolve().parents[1] / "data" / "prospect.db").exists(),
+                    reason="needs an unbuilt store; data/prospect.db is present. "
+                           "Note connect() CREATES the schema, so running any "
+                           "pipeline script once puts the install in a third state: "
+                           "built-but-empty, which this route cannot distinguish "
+                           "from never-built.")
 def test_condo_routes_report_an_unbuilt_store():
     """A fresh clone has an empty data/ and no shared store, so these routes are
     querying something that does not exist. That must read as "not built yet",

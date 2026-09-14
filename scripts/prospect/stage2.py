@@ -86,7 +86,7 @@ def cmd_worklist(con, args):
     DECL_DIR.mkdir(parents=True, exist_ok=True)
     print(f"wrote {len(rows)} rows -> {out}")
     print(f"drop each declaration PDF into {DECL_DIR} named <folio prefix>.pdf, "
-          f"then run: scripts\\stage2.py --extract")
+          f"then run: scripts\\prospect\\stage2.py --extract")
 
 
 def pdf_text(path):

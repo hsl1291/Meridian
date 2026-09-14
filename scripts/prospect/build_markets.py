@@ -35,7 +35,7 @@ EARLY-STAGE IS A DIVERGENCE, NOT A LEVEL. A market is early when the drivers are
 firing but supply and price have NOT yet responded. Established markets score
 just as well on drivers; they have simply already been bid up.
 
-    venv\\Scripts\\python.exe scripts\\build_markets.py
+    venv\\Scripts\\python.exe scripts\\prospect\\build_markets.py
 """
 import json
 import sys
@@ -268,7 +268,7 @@ def main():
     con = connect()
     try:
         if not con.execute("SELECT COUNT(*) FROM county").fetchone()[0]:
-            raise SystemExit("county table empty — run scripts/ingest_market.py --all first")
+            raise SystemExit("county table empty — run scripts/prospect/ingest_market.py --all first")
         n = build(con)
         log_ingest(con, "build_markets", started,
                    datetime.now().isoformat(timespec="seconds"), n, "derived rebuild")

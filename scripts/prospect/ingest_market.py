@@ -11,8 +11,8 @@ level, so any market can be selected later — South Florida is just the default
     zhvi       Zillow ZHVI                  metro home value index, monthly
     qcew       BLS QCEW                     employment + average pay by county and NAICS
 
-    venv\\Scripts\\python.exe scripts\\ingest_market.py --all
-    venv\\Scripts\\python.exe scripts\\ingest_market.py pop irs      # just these
+    venv\\Scripts\\python.exe scripts\\prospect\\ingest_market.py --all
+    venv\\Scripts\\python.exe scripts\\prospect\\ingest_market.py pop irs      # just these
 """
 import argparse
 import csv
@@ -360,7 +360,7 @@ def main():
                        datetime.now().isoformat(timespec="seconds"), n, "")
     finally:
         con.close()
-    print("\nnow run: scripts\\build_markets.py")
+    print("\nnow run: scripts\\prospect\\build_markets.py")
 
 
 if __name__ == "__main__":

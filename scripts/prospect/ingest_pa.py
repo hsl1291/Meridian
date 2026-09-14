@@ -10,7 +10,7 @@ where the heuristic is visible and re-runnable.
 Paging is by OBJECTID window, not resultOffset. Offset paging on this service
 costs ~21s/page because the server rescans; an indexed OBJECTID range is ~0.8s.
 
-    venv\\Scripts\\python.exe scripts\\ingest_pa.py
+    venv\\Scripts\\python.exe scripts\\prospect\\ingest_pa.py
 """
 import sys
 import time

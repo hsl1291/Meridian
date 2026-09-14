@@ -322,9 +322,9 @@ def main():
     started = datetime.now().isoformat(timespec="seconds")
     con = connect()
     if not con.execute("SELECT COUNT(*) FROM nal_condo_unit").fetchone()[0]:
-        raise SystemExit("nal_condo_unit is empty -- run scripts/ingest_nal.py first")
+        raise SystemExit("nal_condo_unit is empty -- run scripts/prospect/ingest_nal.py first")
     if not con.execute("SELECT COUNT(*) FROM dbpr_association").fetchone()[0]:
-        raise SystemExit("dbpr_association is empty -- run scripts/ingest_dbpr.py first")
+        raise SystemExit("dbpr_association is empty -- run scripts/prospect/ingest_dbpr.py first")
 
     build_groups(con)
     matches = match(con)

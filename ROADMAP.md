@@ -43,21 +43,53 @@ is largely already here. The arithmetic on top of it is not.
 
 ---
 
-## Phase 0 — make it run again
+## Phase 0 — make it run again  ✅ done
 
-Blocking. **1 day.** Nothing below can be verified until this lands.
+**1 day, as estimated.** `stage2.py --status` runs end to end again; 44 tests
+pass on three consecutive runs leaving no artifacts behind.
 
-| # | Work | Effort |
+| # | Work | Status |
 |---|---|---|
-| 0.1 | Fix path wiring in all 7 `scripts/prospect/*.py`: `ROOT` to `parents[2]`, imports to `backend.prospect.*`, `CFG` to `backend/prospect/config.json` | 2h |
-| 0.2 | Add the four undeclared third-party deps to `requirements.txt`: `pyproj` (build_targets), `pypdf` (stage2), `requests` (every ingest), `Pillow` (make_icon) | 15m |
-| 0.3 | `tests/` + CI: import every module, run `declaration._selftest()`, boot the app with an empty DB and assert every route in `/api/docs` answers without a 500 | 4h |
-| 0.4 | Decide what the Dockerfile is for — it fetches map layers but never builds `prospect.db`, so the image has no condo data. Either run the prospect pipeline in the build or say in the file that the image is map-only | 1h |
+| 0.1 | Path wiring in all 7 `scripts/prospect/*.py` | done |
+| 0.2 | Undeclared deps → `requirements.txt` + a new `requirements-dev.txt` | done |
+| 0.3 | `tests/` (44) + GitHub Actions CI on every push | done |
+| 0.4 | Dockerfile scope decided: it ships the map, not the condo screen | done |
 
-There are currently **zero tests** in the repo. The 4-sample `_selftest` inside
-`declaration.py` is the only executable check of anything, and it is not wired to
-run anywhere. A single CI job that catches "the scripts don't import" would have
-caught the merge regression on the day it happened.
+The wrong `ROOT` was doing more damage than blocking imports — it was silently
+redirecting data paths. `ingest_nal.py` looked for its tax roll in
+`scripts/data/raw/`, `stage2.py` for declarations in `scripts/data/declarations/`,
+and all three `config.json` reads pointed at a file that does not exist. Fixed
+explicitly per file rather than through a shared bootstrap module, which would
+have broken under `python -m` and under the test harness.
+
+`Pillow` went to `requirements-dev.txt` rather than the runtime install: it is
+only `make_icon.py`, whose output is already committed.
+
+**Three things the tests found that the plan did not.** Each one is the kind
+that only appears when something actually runs:
+
+1. **The first-run failure is not a missing table.** `ATTACH` fails before any
+   query, because the shared store is absent. Two different states with two
+   different fixes, so `unbuilt_detail()` reports them separately — a missing
+   table names the script that builds it, a missing store names the environment
+   variables that point at one. Every other `OperationalError` still raises,
+   pinned by a test, because a handler that swallows *database is locked* behind
+   a friendly message is worse than the 500 it replaced.
+2. **`_shared_root()`'s Windows fallback is a *relative* path on POSIX.**
+   `Path(r"C:\Apps\_shared")` is absolute only on Windows; everywhere else an
+   unconfigured run creates a directory named `C:\Apps\_shared` **in the working
+   directory** and writes a store into it, rather than saying it is not
+   configured. Folded into Portability below, now as a bug rather than a
+   style note.
+3. **Built-but-empty is a third first-run state.** `connect()` creates the schema
+   as a side effect, so running any pipeline script once makes every table exist
+   with zero rows. The UI then shows "0 condos" and cannot distinguish *the
+   screen was built and found nothing* from *the screen was never built* — the
+   same ambiguity 0.4 set out to remove. See `/api/selftest` below.
+
+A test asserts that every `scripts\...py` path printed in an error message
+actually exists; it immediately found nine more stale ones in docstrings that
+the merge had left behind.
 
 ---
 
@@ -519,10 +551,13 @@ of the coastal counties.
 - **Deal pipeline state.** `stage2_verified` is the only workflow field on a
   target. A status enum (screened / researching / contacted / LOI / dead) with a
   timestamp and a note log turns the table into something a team works from. ~2 days.
-- **Portability.** `C:\Apps\_shared` is the fallback in three separate copies of
-  `_shared_root()`; `launch.py` and `install.py` are Windows-only. If this only
-  ever runs on one Windows box that is fine — but the Dockerfile suggests
-  otherwise, and the three duplicated functions should be one import regardless. ~1 day.
+- **Portability.** `_shared_root()` is duplicated in three files, and its
+  `C:\Apps\_shared` fallback is a *relative* path off Windows — so an
+  unconfigured POSIX run creates that name as a directory in the working
+  directory instead of reporting that the store is not configured (found in
+  Phase 0; `tests/conftest.py` now cleans it up). Make it one import, and make
+  the fallback platform-aware. `launch.py` and `install.py` are Windows-only,
+  which is fine for one box but not for the Dockerfile. ~1 day.
 - **Roll provenance in the UI.** `ingest_log` is populated and exposed through
   `/api/condo/stats`, but a user reading a score cannot see it came from a
   *preliminary* 2026 roll. Put the vintage in the Records header. ~2h.
@@ -531,12 +566,11 @@ of the coastal counties.
   set look identical to the user, which is exactly the ambiguity that makes "is
   the map working" hard to answer. Surface a one-line failure state per layer. ~1 day.
 - **`/api/selftest`.** The app needs ~53MB of fetched layers plus a ~330MB shared
-  store, and has no way to report which of them are actually present. A route
-  that lists each dataset, its path, and whether it resolved would make the
-  question answerable by the app instead of by reading logs. ~0.5 day.
-- **`/api/condo/stats` returns 500 against an unbuilt database** rather than
-  saying the screen has not been built yet. `/api/acquisitions/health` gets this
-  right; stats does not. Pinned as an xfail in `tests/test_api.py`. ~1h.
+  store, and has no way to report which are present. A route listing each
+  dataset, its path, and whether it resolved would make the question answerable
+  by the app instead of by reading logs. It also closes the built-but-empty gap
+  Phase 0 left open: row counts distinguish a screen that found nothing from one
+  that was never built, which a 503 cannot. ~0.5 day.
 - **Basemap has no fallback.** Tiles come from `basemaps.cartocdn.com` and
   `server.arcgisonline.com` with no key and no alternative — if either
   rate-limits or changes terms the map goes blank with no diagnostic. ~0.5 day.
@@ -552,7 +586,7 @@ of the coastal counties.
 ## Sequencing
 
 ```
-Phase 0  ██                              1d   blocking
+Phase 0  ██                              1d   DONE
 Phase 1  ██████████████                  7d   1.1 gates Phase 2
 Phase 2  ████████████                    6d   what the buyout costs
 Phase 3  ████████████                    6d   the map: colour, intensity, 3D

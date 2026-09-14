@@ -1,8 +1,8 @@
 """One-time migration: move the shared tables out of prospect.db into the
 shared store that Sitefolio also reads.
 
-    venv\\Scripts\\python.exe scripts\\migrate_to_shared.py            migrate
-    venv\\Scripts\\python.exe scripts\\migrate_to_shared.py --status   report only
+    venv\\Scripts\\python.exe scripts\\prospect\\migrate_to_shared.py            migrate
+    venv\\Scripts\\python.exe scripts\\prospect\\migrate_to_shared.py --status   report only
 
 Moves (not copies) the tables listed in backend.db.SHARED_TABLES, so there is
 exactly one source of truth and no drift. Prospect's queries keep working

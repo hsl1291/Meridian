@@ -11,7 +11,7 @@ language lives. That date comes from here.
              Zip, Units, Recorded Date, Primary Status, Secondary Status,
              Managing Entity {Number,Name,Route,Street,City,State,Zip}
 
-    venv\\Scripts\\python.exe scripts\\ingest_dbpr.py [--refresh]
+    venv\\Scripts\\python.exe scripts\\prospect\\ingest_dbpr.py [--refresh]
 """
 import argparse
 import csv

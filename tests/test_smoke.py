@@ -52,3 +52,18 @@ def test_prospect_scripts_import(script):
 def test_declaration_selftest_passes():
     from backend.prospect.declaration import _selftest
     assert _selftest()
+
+
+def test_user_facing_script_paths_are_runnable():
+    """These strings are instructions. After the merge they named paths that no
+    longer exist, which is how a wrong ROOT stayed invisible for a whole release."""
+    import re
+    bad = []
+    for f in (ROOT / "scripts").rglob("*.py"):
+        for n, line in enumerate(f.read_text().splitlines(), 1):
+            for m in re.finditer(r"scripts[/\\]{1,2}(\w+\.py)", line):
+                named = ROOT / "scripts" / m.group(1)
+                nested = ROOT / "scripts" / "prospect" / m.group(1)
+                if not named.exists() and nested.exists():
+                    bad.append(f"{f.relative_to(ROOT)}:{n}: {m.group(0)}")
+    assert not bad, "script paths that do not exist:\n  " + "\n  ".join(bad)
