@@ -306,7 +306,11 @@
       </div>
       <div id="t-cap"><p class="msg">Loading zoning envelope…</p></div>
 
+      <h3>What the buyout costs</h3>
+      <div id="t-econ"><p class="msg">Estimating…</p></div>
+
       <h3>Ownership concentration</h3>
+      <div id="t-conc"></div>
       <table class="mini"><thead><tr><th>Owner</th><th>Mailing</th><th class="n">Units</th><th class="n">Share</th></tr></thead>
         <tbody>${owners}</tbody></table>
       <div class="note">${g ? `${fmt(g.distinct_owners)} distinct owners across ${fmt(t.units_nal)} units.
@@ -383,6 +387,60 @@
 
     loadComps(key);
     wireCapacity(key);
+    loadEconomics(key);
+    drawConcentration(d);
+  }
+
+  // Ownership as one bar: whether a building is already being assembled should
+  // read at a glance rather than by scanning a column of percentages. Ordered
+  // by size, so it is one hue getting lighter, not four competing identities.
+  function drawConcentration(d) {
+    const box = el('t-conc');
+    if (!box || !window.Charts) return;
+    const total = d.target.units_nal || 0;
+    const owners = (d.owners || []).slice();
+    if (!total || !owners.length) { box.innerHTML = ''; return; }
+    const top = owners[0], next = owners.slice(1, 5);
+    const nextUnits = next.reduce((a, o) => a + o.units, 0);
+    const tail = Math.max(0, total - top.units - nextUnits);
+    box.innerHTML = Charts.stackedBar([
+      { label: top.owner_name, value: top.units, cls: 'top' },
+      { label: `next ${next.length} owners`, value: nextUnits, cls: 'next' },
+      { label: `${d.group.distinct_owners - 1 - next.length} remaining owners`, value: tail, cls: 'tail' },
+    ], { title: 'Ownership concentration' }) + `<div class="chart-legend">
+      <span><i class="seg-top"></i>${esc((top.owner_name || '').slice(0, 26))} — ${pc(100 * top.units / total, 1)}</span>
+      <span><i class="seg-next"></i>Next ${next.length}</span>
+      <span><i class="seg-tail"></i>The rest</span></div>`;
+  }
+
+  async function loadEconomics(key) {
+    const box = el('t-econ');
+    if (!box) return;
+    let e;
+    try { e = await fetchJSON(`/api/economics/${encodeURIComponent(key)}`, { timeoutMs: 30000 }); }
+    catch (err) { box.innerHTML = '<p class="msg">Buyout estimate unavailable.</p>'; return; }
+    if (e.cost_at_fmv == null) {
+      box.innerHTML = `<div class="note warn">${esc(e.caveats[0] || 'Nothing here could be priced.')}</div>`;
+      return;
+    }
+    const premium = (e.cost_with_holdout || e.cost_at_fmv) - e.cost_at_fmv;
+    const chart = window.Charts ? Charts.waterfall([
+      { label: `${fmt(e.units_to_acquire)} units to acquire`, value: e.cost_at_fmv, kind: 'add' },
+      { label: `Holdout premium (${Math.round(e.holdout_share * 100)}% at +${Math.round(e.holdout_premium * 100)}%)`,
+        value: premium, kind: 'risk' },
+      { label: 'Total', value: e.cost_with_holdout, kind: 'total' },
+    ], { title: 'Buyout cost' }) : '';
+    box.innerHTML = `
+      <div class="cells">
+        <div><b>${usd(e.cost_with_holdout)}</b><span>Est. buyout</span></div>
+        <div><b>${usd(e.median_unit_value)}</b><span>Median unit</span></div>
+        <div><b>${fmt(e.controlled_units)}</b><span>Already held</span></div>
+        <div><b>${fmt(e.units_to_acquire)}</b><span>To acquire</span></div>
+      </div>
+      ${chart}
+      <div class="note">Priced from ${esc(e.basis_summary || 'recorded sales')}.
+        ${e.psf ? `$/SF ${usd(e.psf)} from ${esc((e.psf_source || '').replace(/_/g, ' '))}.` : ''}</div>
+      ${e.caveats.map((c) => `<div class="note warn">${esc(c)}</div>`).join('')}`;
   }
 
   async function loadComps(key) {
@@ -633,6 +691,52 @@
     await loadMarkets();
   }
 
+  // Components of population change, by year. NOT a stacked area: domestic
+  // migration goes negative -- Columbus added 83k people on NEGATIVE domestic
+  // migration -- and a stacked area cannot show a negative component without
+  // lying about the total. Positives above zero, negatives below it.
+  async function drawComponents(cbsa) {
+    const box = el('m-components');
+    if (!box) return;
+    let dd;
+    try { dd = await fetchJSON('/api/dd/' + encodeURIComponent(cbsa), { timeoutMs: 30000 }); }
+    catch (e) { box.innerHTML = '<p class="msg">Component series unavailable.</p>'; return; }
+    const years = (dd.pop_years || []).slice(1);   // first year has no change
+    if (!years.length || !window.Charts) { box.innerHTML = '<p class="msg">No component series for this metro.</p>'; return; }
+    box.innerHTML = Charts.divergingBars(
+      years.map((r) => ({ label: String(r.year), values: r })),
+      [{ key: 'nat', label: 'Natural increase', cls: 'series-a' },
+       { key: 'dom', label: 'Domestic migration', cls: 'series-b' },
+       { key: 'intl', label: 'International migration', cls: 'series-c' }],
+      { title: 'Components of population change' })
+      + `<div class="note">Which of the three carries the growth usually tells you more than the
+         total does — a headline resting on international migration depends entirely on that flow
+         continuing.</div>`;
+  }
+
+  // Emphasis, not a palette: this metro against all the others. Colouring 469
+  // points by anything would bury the one the reader came for.
+  let ALL_METROS = null;
+  async function drawTightness(cbsa) {
+    const box = el('m-scatter');
+    if (!box) return;
+    try {
+      if (!ALL_METROS) ALL_METROS = (await fetchJSON('/api/metros?limit=1000&min_pop=0&metro_only=true')).rows;
+    } catch (e) { box.innerHTML = '<p class="msg">Metro set unavailable.</p>'; return; }
+    const pts = ALL_METROS
+      .filter((r) => r.permits_per_1k != null && r.net_mig_total_rate != null)
+      .map((r) => ({ x: r.permits_per_1k, y: r.net_mig_total_rate,
+                     label: r.name, highlight: r.cbsa === cbsa }));
+    if (!pts.length || !window.Charts) { box.innerHTML = '<p class="msg">No metros to plot.</p>'; return; }
+    box.innerHTML = Charts.scatter(pts, {
+      title: 'Migration against permitting, all metros',
+      xLabel: 'Permits per 1,000 residents', yLabel: 'Net migration per 1,000',
+      formatX: (v) => v.toFixed(0), formatY: (v) => v.toFixed(0) })
+      + `<div class="note">Up and to the left is demand arriving faster than supply answers it.
+         This is the composite the screener calls <i>demand vs supply</i>, drawn rather than
+         scored — so you can disagree with a position instead of a number.</div>`;
+  }
+
   async function openMarket(cbsa) {
     const box = el('t-detail');
     el('t-drawer').hidden = false;
@@ -685,6 +789,12 @@
         and price have not responded yet. Headroom is the inverse of permits-per-capita and 3-year price growth — an
         Established market scores just as well on drivers, it has simply already been bid up.</div>
 
+      <h3>What is driving the population</h3>
+      <div id="m-components"><p class="msg">Loading components…</p></div>
+
+      <h3>Demand against supply</h3>
+      <div id="m-scatter"><p class="msg">Loading metros…</p></div>
+
       <h3>Driver scores</h3>
       <table class="mini"><tbody>${drivers.map(([l, v]) =>
         `<tr><td style="width:44%">${l}</td><td>${bar(v)}</td></tr>`).join('')}</tbody></table>
@@ -715,6 +825,8 @@
         with AGI; Census Building Permits Survey; Zillow ZHVI; BLS QCEW. Multiplier model per Moretti (2010).</div>`;
 
     el('dd-open').addEventListener('click', () => ddReport(cbsa));
+    drawComponents(cbsa);
+    drawTightness(cbsa);
 
     el('j-run').addEventListener('click', async () => {
       const r = await fetch('/api/jobs-impact', {

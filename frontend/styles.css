@@ -23,6 +23,14 @@
   --warn: #b45309;
   --danger: #b91c1c;
   --good: #166534;
+  /* Chart series. Validated for colour-vision deficiency before use --
+     brand blue against accent purple came out at delta-E 2.2 under deuteranopia,
+     which is indistinguishable. This trio passes the lightness band, chroma
+     floor, CVD separation, normal-vision floor and contrast checks. */
+  --series-a: #1f6feb;
+  --series-b: #b45309;
+  --series-c: #0d9488;
+  --series-mute: #c3c9d4;
   --radius: 8px;
   --radius-sm: 5px;
   --shadow-soft: 0 1px 2px rgba(15, 23, 42, 0.04);
@@ -881,3 +889,36 @@ body { display: flex; }
   margin-right: 5px; vertical-align: -1px; }
 .chart-legend i.single { background: var(--brand); }
 .chart-legend i.bulk { background: var(--text-dim); opacity: .5; }
+
+/* Series identity. Text never wears a series colour -- values and labels stay in
+   ink tokens and the mark beside them carries identity. */
+.chart-seg.series-a { fill: var(--series-a); }
+.chart-seg.series-b { fill: var(--series-b); }
+.chart-seg.series-c { fill: var(--series-c); }
+.chart-legend i.series-a { background: var(--series-a); }
+.chart-legend i.series-b { background: var(--series-b); }
+.chart-legend i.series-c { background: var(--series-c); }
+.chart-legend i { border-radius: 2px; }
+
+/* Waterfall. Not a categorical palette: one accumulating quantity plus a risk
+   component, so cost is one hue, the premium is the warning token, and units
+   already controlled are de-emphasised because they cost nothing. */
+.chart-step.base { fill: var(--series-mute); }
+.chart-step.add { fill: var(--series-a); }
+.chart-step.risk { fill: var(--warn); }
+.chart-step.total { fill: var(--text); fill-opacity: .82; }
+.chart-rowlabel { fill: var(--text-muted); font-size: 10.5px; }
+.chart-value { fill: var(--text-muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+.chart-value.hot { fill: var(--text); font-weight: 600; }
+.chart-axis-title { fill: var(--text-dim); font-size: 9.5px; }
+
+/* The zero line is the reference the reader needs when a component goes
+   negative, so it is the only gridline allowed to be darker. */
+.chart-grid.zero { stroke: var(--text-dim); }
+
+/* Emphasis: the subject carries the accent, the other 468 are context. */
+.chart-dot { fill: var(--series-mute); }
+.chart-dot.hot { fill: var(--series-a); stroke: var(--bg); stroke-width: 2; }
+.chart-legend i.seg-top { background: var(--brand); }
+.chart-legend i.seg-next { background: var(--brand-soft); border: 1px solid var(--border); }
+.chart-legend i.seg-tail { background: var(--bg-panel); border: 1px solid var(--border); }

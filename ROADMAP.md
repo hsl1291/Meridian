@@ -305,7 +305,7 @@ reach.
 
 ---
 
-## Phase 4 — charts and documents
+## Phase 4 — charts and documents  ✅ done
 
 **8 days.** The application contains one chart, and the document it prints
 carries four print-geometry bugs.
@@ -333,7 +333,7 @@ Fix the server-side `_sparkline` against the same geometry while in there. It is
 a twenty-line correction to something that currently draws misleading slopes, and
 that is a bug regardless of where the new charts live.
 
-### 4.2 The charts that earn their place  ◑ 1 of 5
+### 4.2 The charts that earn their place  ✅ done
 
 Five, in build order. Each one answers a question the app currently answers in
 prose or not at all.
@@ -343,17 +343,21 @@ prose or not at all.
    bulk-deed sales marked separately, the single-unit median drawn as a line. The README's biggest data trap — 148 folios showing up to
    $4.9M each that are really a handful of bulk deeds — is currently a paragraph
    of warning. It should be a picture, because the picture is unmistakable.
-2. **The buyout waterfall** from 2.2.
-3. **Ownership concentration.** A stacked bar: top owner, next four, long tail.
-   Whether a building is already being assembled should read at a glance rather
-   than by scanning a table of percentages.
-4. **Population components, stacked area.** Natural increase, domestic migration,
-   international migration. The DD report explains Columbus entirely in prose —
-   +83k people but negative domestic migration and 73% international — and draws
-   nothing. This is the chart that sentence is describing.
-5. **Permits against migration, all 469 metros.** A scatter with the selected
-   metro highlighted and the diagonal marked. It makes the `tightness` composite
-   auditable at a glance, which is what the codebase says it wants from it.
+2. **The buyout waterfall** from 2.2. ✅ In the Records drawer, fed by `/api/economics`.
+3. **Ownership concentration.** ✅ A stacked bar: top owner, next four, long
+   tail — one hue getting lighter, since the segments are ordered by size rather
+   than competing identities.
+4. **Population components.** ✅ **Not** a stacked area, which is what this
+   roadmap called for and is the wrong form: domestic migration goes negative —
+   Columbus added 83k people on *negative* domestic migration — and a stacked
+   area cannot show a negative component without lying about the total. Built as
+   a diverging bar instead, positives above zero and negatives below, in the
+   market drawer.
+5. **Permits against migration, all metros.** ✅ An *emphasis* scatter: the
+   selected metro carries the accent and the rest are context gray. Colouring 469
+   points by identity would bury the one the reader came for. It makes the
+   `tightness` composite auditable at a glance, which is what the codebase says
+   it wants from it.
 
 ### 4.3 The memo prints badly  ✅ done
 
@@ -594,7 +598,7 @@ Phase 0  ██                              1d   DONE
 Phase 1  ██████████████                  7d   1.1 DONE
 Phase 2  ████████                        4d   DONE (comps only)
 Phase 3  ████████████                    6d   DONE
-Phase 4  ████████████████                8d   4.1 + 4.3 DONE; 4 charts left
+Phase 4  ████████████████                8d   DONE
 Phase 5  ██████████████                  7d   where the population is going
 Phase 6  ██████████████████              9d   who is already assembling
 Phase 7  ██████████████████              9d   declarations at scale
