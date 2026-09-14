@@ -170,7 +170,7 @@ matters most. JV is a floor indicator here, nothing more.
 
 Expose it as `/api/economics/{group_key}` with the assumptions as query
 parameters, so a sensitivity pass is three URL changes rather than a rebuild.
-Mortgage balances are the one input not in the repo — see Phase 6.2.
+Mortgage balances are the one input not in the repo — see Phase 7.2.
 
 ### 2.3 Surface it, and sort on it *(2 days)*
 
@@ -191,9 +191,88 @@ say how it was built is not a screening figure, it is a guess with a dollar sign
 
 ---
 
-## Phase 3 — the chart layer
+## Phase 3 — the map
 
-**5 days.** The whole application contains one chart.
+**6 days.** The reference point is [Gridics](https://map.gridics.com/us/fl/miami-beach),
+which is Miami-built on Miami 21 and whose whole argument is in its URL fragment:
+`#12.85/25.79458/-80.12569/0/45` — zoom, centre, bearing, and **45° of pitch**. It
+reads zoning as massing. Groundwork draws the same polygons flat.
+
+What is there today: a MapLibre map on a CARTO raster basemap, a ten-family
+ZoLa-style zoning palette, live municipal polygons for the wired cities, and
+pre-baked tri-county layers. What is not: any pitch, any bearing, any
+`fill-extrusion`, and — until this phase — correct colours in the home market.
+
+### 3.1 Zoning colour accuracy *(done)*
+
+`_zone_category` applied one set of generic letter rules nationally, so Miami,
+the market this app exists for, had the worst colour accuracy in it:
+
+| Code | Was | Is | Miami 21 meaning |
+|---|---|---|---|
+| `CS` | commercial | open | Civic Space — parks, drawn as retail |
+| `CI`, `CI-HD` | commercial | special | Civic Institutional |
+| `D1` | other | industrial | Work Place |
+| `D2` | other | industrial | Industrial |
+| `D3` | other | industrial | Marine |
+| `EU-*` | other | residential | Miami-Dade Estate Use |
+
+These are real ambiguities rather than oversights — `CS` is Civic Space under
+Miami 21 and Commercial Service in half the other wired cities — so the local
+vocabulary is now applied only where it is in force. `_zone_category` takes an
+optional municipality, both overlay call sites pass it, and a test pins the
+generic behaviour so Miami's dictionary cannot leak into Tampa's.
+
+Also added: `_zone_stories`, which recovers the storey cap a form-based code
+*declares* — `T6-8` is eight storeys and `T6-80` is eighty — published as
+`max_stories` on every overlay feature. Codes that declare no height report
+`None` rather than a guess. One property, two consumers: 3.2 and 3.3.
+
+### 3.2 Intensity inside the family *(1 day)*
+
+Every T6 tier currently paints one colour, so `T6-8-O` and `T6-80-O` are
+indistinguishable on the map. For a termination screen that is the wrong thing to
+hide: the intensity tier *is* the redevelopment capacity, and it is the reason to
+look at a building whose by-right envelope is smaller than what is standing.
+
+Ramp lightness within each family by `max_stories` rather than adding colours —
+the ten-family legend stays readable and the tiers separate. Legend gains a
+lightness scale, not ten more swatches.
+
+### 3.3 Three dimensions *(3 days)*
+
+- `NavigationControl({ showCompass: false })` → `true`. There is currently no
+  affordance for rotate or tilt at all.
+- A `zoning-3d` `fill-extrusion` layer keyed to `max_stories × 10ft`, toggled in
+  Layers, so the envelope reads as volume. Extrude only where the code declares a
+  height; flat where it does not, and say which in the legend.
+- Pitch and bearing into the URL hash, which currently carries only `z/lat/lon/sel/bm`.
+  A pitched view is not shareable today — the whole point of the Gridics link.
+
+The honest limit: this draws the *zoning envelope*, not the building. Real massing
+needs setbacks, lot coverage and site geometry, which `capacity.py` already warns
+it ignores. Label it as the envelope and it is useful; label it as a building and
+it is a lie with a shadow on it.
+
+### 3.4 The home market has no live zoning service *(1.5 days)*
+
+`METRO_ZONING` wires Orlando, Tampa, Jacksonville, St. Pete, Clearwater,
+Sarasota, Tallahassee, West Palm Beach — and **not Miami-Dade**. Tri-county
+zoning comes only from the pre-baked GeoJSON that `fetch_layers.py` downloads
+into `data/`, which is gitignored and absent from a fresh clone. So a new install
+that has not run the fetch script shows an empty zoning layer over Miami and a
+populated one over Tampa, with nothing in the UI explaining the difference.
+
+Either wire the Miami-Dade and City of Miami services into `METRO_ZONING` as a
+fallback, or have the layer report that its data has not been fetched. Silently
+drawing nothing is the worst of the three options and is what happens now.
+
+---
+
+## Phase 4 — charts and documents
+
+**8 days.** The application contains one chart, and the document it prints
+carries four print-geometry bugs.
 
 `market_dd.py:532`, `_sparkline()` — a bare polyline with a hardcoded
 `#1f3b57` stroke, no axis, no labels, no theme awareness, and
@@ -201,7 +280,7 @@ say how it was built is not a screening figure, it is a guess with a dollar sign
 slopes it draws are not the slopes in the data. Four uses in the DD report. Zero
 charts in `app.js` or `workspace.js`.
 
-### 3.1 The module *(2 days)*
+### 4.1 The chart module *(2 days)*
 
 `frontend/charts.js`, hand-rolled SVG. The app has no build step — everything is
 plain script tags — and line, bar, area, scatter and strip plots are a few
@@ -218,7 +297,7 @@ Fix the server-side `_sparkline` against the same geometry while in there. It is
 a twenty-line correction to something that currently draws misleading slopes, and
 that is a bug regardless of where the new charts live.
 
-### 3.2 The charts that earn their place *(3 days)*
+### 4.2 The charts that earn their place *(3 days)*
 
 Five, in build order. Each one answers a question the app currently answers in
 prose or not at all.
@@ -240,9 +319,37 @@ prose or not at all.
    metro highlighted and the diagonal marked. It makes the `tightness` composite
    auditable at a glance, which is what the codebase says it wants from it.
 
+### 4.3 The memo prints badly *(3 days)*
+
+The memo's typography is considered — the problems are geometry, and they are the
+kind that only appear on paper.
+
+1. **Double margins.** `@page` insets `0.7in` on each side, then `.pad` adds
+   another `0.7in` inside it. On Letter that leaves about `5.7in` of live width
+   for tables built for more, so columns cramp and wrap.
+2. **The cover spills a blank page.** `.cover` is `min-height: 9.6in` against
+   `11in − 0.75in − 0.85in = 9.4in` of available height. It overflows by two
+   tenths of an inch, and `page-break-after: always` then adds a second break —
+   so every memo has an empty page two.
+3. **Multi-page tables lose their headers.** No `thead { display: table-header-group }`
+   anywhere, so a forty-row sales table continues onto page three with no column
+   labels.
+4. **`section { page-break-inside: avoid }` applies to sections taller than a
+   page**, where it either does nothing or pushes a large blank gap ahead of the
+   section. Avoidance belongs on rows and on small blocks, not on containers that
+   can exceed a sheet.
+
+Also: `.kv` uses `repeat(auto-fill, minmax(1.6in, 1fr))`, so a count that does not
+divide evenly leaves one cell stretched across the final row, and there is no
+`orphans` / `widows` control anywhere.
+
+None of that is subjective, so fix it first and look again — "not clean" may be
+entirely these four things, or it may turn out to be the Georgia-and-Helvetica
+pairing underneath them, which is a different job.
+
 ---
 
-## Phase 4 — where the population is going
+## Phase 5 — where the population is going
 
 **7 days.** National scan first, then metro-level flows.
 
@@ -252,7 +359,7 @@ movers earn. It is read once, in `build_markets.py:143`, to compute a
 pipe-joined `top_origins` string and an AGI premium. The `out` direction is
 ingested and never surfaced anywhere in the application.
 
-### 4.1 The flow query layer *(2 days)*
+### 5.1 The flow query layer *(2 days)*
 
 Aggregate county-to-county to CBSA-to-CBSA in both directions and net them.
 `ix_flow_dest` covers `(dest_fips, year)` only, so every outbound query is a
@@ -271,7 +378,7 @@ changes how a number should be read:
   are invisible, which biases exactly the populations a relocation plan has to
   deal with.
 
-### 4.2 National scan *(2 days)*
+### 5.2 National scan *(2 days)*
 
 Every metro ranked by net household gain and by net AGI gain. The interesting
 part is the gap between the two: a metro gaining households while losing AGI is
@@ -280,9 +387,9 @@ gaining poor and losing rich, and no single-number ranking shows that.
 Feed both as new metrics into the existing `/api/metro-trends` dropdown — the
 choropleth layer already exists and already shades by national percentile, so
 this is two new columns rather than new map work. Pair it with the scatter from
-3.2: net households on one axis, net AGI on the other, quadrants labelled.
+4.2: net households on one axis, net AGI on the other, quadrants labelled.
 
-### 4.3 Metro flow view *(3 days)*
+### 5.3 Metro flow view *(3 days)*
 
 For one metro: top inbound and outbound corridors, netted, with AGI per
 household on each. Paired horizontal bars — inbound left, outbound right, net in
@@ -296,12 +403,12 @@ is the question worth answering.
 
 ---
 
-## Phase 5 — movement, not level
+## Phase 6 — movement, not level
 
 **9 days.** This slipped down the list and it is worth saying why it should not
 slip off it.
 
-### 5.1 Roll vintage history and assembly velocity *(3 days)*
+### 6.1 Roll vintage history and assembly velocity *(3 days)*
 
 `build_targets.py` opens with `DELETE FROM condo_group` and `DELETE FROM target`.
 Every rebuild destroys the prior state, so the app can only answer *who owns a
@@ -320,7 +427,7 @@ the one to be early on. The current screen ranks the first one higher.
 cost me, and is somebody already doing it.** Neither half is worth as much alone.
 This needs no new data source — only the discipline to stop deleting history.
 
-### 5.2 Sunbiz entity resolution *(4 days)*
+### 6.2 Sunbiz entity resolution *(4 days)*
 
 Shared mailing address is a clever proxy for one buyer behind several LLCs and
 the weakest link in the concentration signal — it misses anyone using a
@@ -333,19 +440,19 @@ Joining `owner_norm` to it builds a real graph and collapses beneficial
 ownership properly. *"These four LLCs holding 31% share a manager"* is a
 sentence the tool cannot produce today.
 
-### 5.3 Watchlists and change alerts *(2 days)*
+### 6.3 Watchlists and change alerts *(2 days)*
 
-Once 5.1 exists, a saved filter that re-evaluates each roll and reports what
+Once 6.1 exists, a saved filter that re-evaluates each roll and reports what
 entered, exited or moved is small work on top of it. This is what makes the app
 something opened weekly rather than quarterly.
 
 ---
 
-## Phase 6 — declaration review at scale
+## Phase 7 — declaration review at scale
 
 **9 days.** Stage 2 is the strategic asset and the most manual thing here.
 
-### 6.1 OCR *(2 days)*
+### 7.1 OCR *(2 days)*
 
 `cmd_extract` bails with "this is likely a SCANNED image PDF" below 200
 characters of extracted text. The target set is buildings recorded roughly
@@ -355,7 +462,7 @@ or a hosted OCR behind `pdf_text`, cache the text beside the PDF, and record
 which path produced it: OCR output is noisier and `find_threshold` needs to know
 that before reporting high confidence.
 
-### 6.2 Bring stage 2 into the app *(3 days)*
+### 7.2 Bring stage 2 into the app *(3 days)*
 
 Retrieval being manual is a sound decision. The *review* being CLI-only is not.
 Today an analyst runs `--worklist`, gets an xlsx, saves PDFs into a folder named
@@ -369,7 +476,7 @@ shares this retrieval problem, so do them together. Until then let an analyst
 enter aggregate debt by hand and have the waterfall flag every figure computed
 without it.
 
-### 6.3 Extractor hardening *(3 days)*
+### 7.3 Extractor hardening *(3 days)*
 
 `declaration.py` is validated by four hand-written samples it passes by
 construction. Before anyone relies on `termination_threshold` at volume it needs
@@ -383,16 +490,16 @@ is the original as amended, and today an amendment PDF overwrites the original's
 findings in the same columns), **right of first refusal**, **recreation leases**,
 and **55+ covenants**.
 
-### 6.4 Re-test Clerk retrieval *(1 day, timeboxed)*
+### 7.4 Re-test Clerk retrieval *(1 day, timeboxed)*
 
 Worth thirty minutes with the network tab before accepting "no documented query
 API" permanently. The SPA is talking to something. If a stable JSON endpoint
-exists, 6.1 and most of 6.2 collapse into an overnight job. If not, write down
+exists, 7.1 and most of 7.2 collapse into an overnight job. If not, write down
 what was tried and when, and keep the manual path.
 
 ---
 
-## Phase 7 — coverage
+## Phase 8 — coverage
 
 **5 days.** Deliberately last: three counties of a mediocre screen is worse than
 one county of a good one.
@@ -419,6 +526,23 @@ of the coastal counties.
 - **Roll provenance in the UI.** `ingest_log` is populated and exposed through
   `/api/condo/stats`, but a user reading a score cannot see it came from a
   *preliminary* 2026 roll. Put the vintage in the Records header. ~2h.
+- **Failures are silent in the map UI.** `loadTargetPins` and several sibling
+  fetches are `catch (e) { return; }` — an endpoint that 500s and an empty result
+  set look identical to the user, which is exactly the ambiguity that makes "is
+  the map working" hard to answer. Surface a one-line failure state per layer. ~1 day.
+- **`/api/selftest`.** The app needs ~53MB of fetched layers plus a ~330MB shared
+  store, and has no way to report which of them are actually present. A route
+  that lists each dataset, its path, and whether it resolved would make the
+  question answerable by the app instead of by reading logs. ~0.5 day.
+- **`/api/condo/stats` returns 500 against an unbuilt database** rather than
+  saying the screen has not been built yet. `/api/acquisitions/health` gets this
+  right; stats does not. Pinned as an xfail in `tests/test_api.py`. ~1h.
+- **Basemap has no fallback.** Tiles come from `basemaps.cartocdn.com` and
+  `server.arcgisonline.com` with no key and no alternative — if either
+  rate-limits or changes terms the map goes blank with no diagnostic. ~0.5 day.
+- **FastAPI `regex=` is deprecated** in favour of `pattern=` at
+  `site_screen.py:917` and `app.py:2615`. Two lines, and a warning that becomes a
+  break. ~10m.
 - **Memo and DD report charts.** Out of scope for Phase 3, which is in-app only.
   Worth revisiting once `charts.js` exists, since the geometry ports directly and
   the memo is what a recipient actually sees. ~2 days.
@@ -431,20 +555,24 @@ of the coastal counties.
 Phase 0  ██                              1d   blocking
 Phase 1  ██████████████                  7d   1.1 gates Phase 2
 Phase 2  ████████████                    6d   what the buyout costs
-Phase 3  ██████████                      5d   3.1 gates 2.3 and 4.2
-Phase 4  ██████████████                  7d   where the population is going
-Phase 5  ██████████████████              9d   who is already assembling
-Phase 6  ██████████████████              9d   declarations at scale
-Phase 7  ██████████                      5d   coverage
+Phase 3  ████████████                    6d   the map: colour, intensity, 3D
+Phase 4  ████████████████                8d   charts, and the memo's print bugs
+Phase 5  ██████████████                  7d   where the population is going
+Phase 6  ██████████████████              9d   who is already assembling
+Phase 7  ██████████████████              9d   declarations at scale
+Phase 8  ██████████                      5d   coverage
                                         ───
-                                        49d
+                                        58d
 ```
 
-Two dependencies are real and cheap to honour: **1.1 before 2.2** (the homestead
-floor), and **3.1 before 2.3 and 4.2** (the chart module). Pull `charts.js`
-forward into the Phase 2 window rather than treating Phase 3 as a block — the
-waterfall wants it, and building the module against a first real consumer
-produces a better module than building it speculatively.
+Three dependencies are real and cheap to honour: **1.1 before 2.2** (the
+homestead floor), **4.1 before 2.3 and 5.2** (the chart module), and **3.1 before
+3.2 and 3.3** — already met, since `max_stories` is what the intensity ramp and
+the extrusion height both read.
+
+Pull `charts.js` forward into the Phase 2 window rather than treating Phase 4 as
+a block: the waterfall wants it, and building the module against a first real
+consumer produces a better module than building it speculatively.
 
 If only one week: **Phase 0 + 1.1 + 2.1** — homestead status and per-unit
 valuation, which together turn the drawer from a fact sheet into an estimate.
@@ -453,7 +581,7 @@ valuation, which together turn the drawer from a fact sheet into an estimate.
 
 ## Open questions
 
-1. **Is this a personal tool or a product?** Everything in Phase 7, and most of
+1. **Is this a personal tool or a product?** Everything in Phase 8, and most of
    Portability, is only worth doing for the second. The install story — desktop
    shortcut, start at logon, self-heal task — reads personal; the Dockerfile
    reads product.
@@ -467,7 +595,7 @@ valuation, which together turn the drawer from a fact sheet into an estimate.
    user supplies, or it needs a source.
 4. **How much does declaration retrieval cost in practice?** If a title company
    or a Clerk bulk order can produce declarations for the whole shortlist for a
-   few hundred dollars, 6.1 and 6.4 get deprioritised and the money is the
+   few hundred dollars, 7.1 and 7.4 get deprioritised and the money is the
    better tool.
 
 ---
