@@ -3239,11 +3239,65 @@ async def flood_overlay(bbox: str = Query(...), limit: int = Query(2000, le=4000
 
 # ---------- live zoning overlay (renders wired metro zoning by viewport) ----------
 
-def _zone_category(code: str) -> str:
-    """Normalize a raw zone code into a ZoLa-style family for map coloring."""
+# Miami 21 is a form-based code, so the district name encodes the intensity:
+# T6-8 and T6-80 are the same transect and eight versus eighty storeys. Colouring
+# them identically — which is what a single "downtown" family does — hides the
+# one attribute that decides whether a termination target can be rebuilt bigger
+# than it stands. `_zone_stories` recovers the cap the code itself declares, and
+# nothing is inferred for codes that do not declare one.
+MIAMI21_STORIES = {"T3": 2, "T4": 3, "T5": 5}
+_T6_RE = re.compile(r"^T6-(\d{1,2})")
+_T345_RE = re.compile(r"^T([345])\b")
+
+# Codes whose letters collide with a generic family and mean something else in
+# the Miami 21 / Miami-Dade vocabulary. Applied only where that vocabulary is in
+# force, because "CS" is Civic Space here and Commercial Service elsewhere.
+MIAMI21_CATEGORY = {
+    "CS": "open",        # Civic Space / parks — NOT commercial
+    "CI": "special",     # Civic Institutional
+    "CI-HD": "special",  # Civic Institutional, Health District
+    "D1": "industrial",  # Work Place
+    "D2": "industrial",  # Industrial
+    "D3": "industrial",  # Marine
+}
+# Miami-Dade county codes that fall through the generic rules.
+DADE_CATEGORY = {"GU": "special", "EU": "residential", "AU": "agricultural"}
+
+_MIAMI21_MUNI_RE = re.compile(r"\b(miami|dade)\b", re.I)
+
+
+def _zone_stories(code: str) -> int | None:
+    """Maximum storeys where the district code states one. None means the code
+    does not declare a height and the map must not pretend otherwise."""
+    c = (code or "").strip().upper()
+    m = _T6_RE.match(c)
+    if m:
+        n = int(m.group(1))
+        return n if 1 <= n <= 99 else None
+    m = _T345_RE.match(c)
+    if m:
+        return MIAMI21_STORIES.get("T" + m.group(1))
+    return None
+
+
+def _zone_category(code: str, muni: str | None = None) -> str:
+    """Normalize a raw zone code into a ZoLa-style family for map coloring.
+
+    `muni` opts the polygon into the local vocabulary. Without it the generic
+    rules apply, which is right for the other wired cities and wrong for Miami:
+    the bare letter rules read CS as commercial and drop D1/D2/D3 into `other`.
+    """
     c = (code or "").strip().upper()
     if not c:
         return "other"
+
+    if muni and _MIAMI21_MUNI_RE.search(muni):
+        if c in MIAMI21_CATEGORY:
+            return MIAMI21_CATEGORY[c]
+        head = c.split("-")[0]
+        if head in DADE_CATEGORY:
+            return DADE_CATEGORY[head]
+
     m = re.match(r"^T([3-6])", c)  # form-based transect (Miami 21 / SmartCode)
     if m:
         return {"3": "residential", "4": "residential", "5": "mixed", "6": "downtown"}[m.group(1)]
@@ -3405,7 +3459,8 @@ async def zoning_overlay(bbox: str = Query(...), limit: int = Query(1500, le=400
                     "zone": zone,
                     "desc": (str(props.get(cfg["desc"])).strip() if cfg.get("desc") and props.get(cfg["desc"]) else None),
                     "muni": cfg["muni"],
-                    "category": _zone_category(zone),
+                    "category": _zone_category(zone, cfg["muni"]),
+                    "max_stories": _zone_stories(zone),
                 }
                 features.append(ft)
 
@@ -3445,7 +3500,8 @@ async def zoning_overlay(bbox: str = Query(...), limit: int = Query(1500, le=400
                     "zone": zone,
                     "desc": (str(props.get(c["desc"])).strip() if c.get("desc") and props.get(c["desc"]) else None),
                     "muni": muni,
-                    "category": _zone_category(zone),
+                    "category": _zone_category(zone, muni),
+                    "max_stories": _zone_stories(zone),
                 }
                 features.append(ft)
     return {"type": "FeatureCollection", "features": features[:limit]}
