@@ -5,4 +5,5 @@ openpyxl>=3.1.0
 # scripts/prospect/: the rebuild pipeline the README documents.
 requests>=2.32.0     # every ingest script
 pyproj>=3.6.0        # build_targets.py -- EPSG:2236 -> WGS84 for site coordinates
-pypdf>=4.2.0         # stage2.py --extract
+pypdf>=4.2.0         # declaration text extraction
+python-multipart>=0.0.9  # declaration PDF upload

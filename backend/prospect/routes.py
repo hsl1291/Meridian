@@ -22,7 +22,7 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
@@ -32,6 +32,7 @@ from .db import connect, connect_query
 router = APIRouter()
 
 HERE = Path(__file__).resolve().parent
+ROOT_DIR = HERE.parent.parent
 CFG = json.loads((HERE / "config.json").read_text(encoding="utf-8"))
 
 
@@ -248,6 +249,149 @@ def save_stage2(group_key: str, body: Stage2):
              body.stage2_notes, group_key))
         con.commit()
         return {"ok": True}
+    finally:
+        con.close()
+
+
+# ═══ declaration review, in the app ════════════════════════════════════════
+# Retrieval stays manual -- the Clerk's site is a client-rendered SPA with no
+# documented query API, and a brittle scraper that breaks silently is worse than
+# a human with a search box. The REVIEW being CLI-only was the part that made no
+# sense: an analyst ran --worklist, got an xlsx, saved PDFs into a folder named
+# by folio prefix, and ran --extract from a terminal.
+
+DECL_DIR = ROOT_DIR / "data" / "declarations"
+MAX_PDF_BYTES = 80 * 1024 * 1024
+
+
+def _resynthesise(con, group_key: str) -> dict:
+    """Recompute the operative terms from every document held for a building and
+    write them onto the target row."""
+    from .declaration import synthesise
+    docs = [dict(r) for r in con.execute(
+        "SELECT * FROM declaration_doc WHERE group_key=? ORDER BY recorded_year, id",
+        (group_key,))]
+    syn = synthesise(docs)
+    if syn:
+        con.execute(
+            """UPDATE target SET termination_threshold=?, kaufman_original=?,
+               kaufman_by_amendment=?, rofr=?, leasehold=?, age_restricted=?,
+               declaration_docs=? WHERE group_key=?""",
+            (syn["termination_threshold"], syn["kaufman_original"],
+             syn["kaufman_by_amendment"], syn["rofr"], syn["leasehold"],
+             syn["age_restricted"], syn["declaration_docs"], group_key))
+        con.commit()
+    return syn
+
+
+@router.post("/api/target/{group_key}/declaration")
+async def upload_declaration(group_key: str, file: UploadFile = File(...)):
+    """Read a recorded declaration and file its findings against the building.
+
+    Each document is stored whole. The target row carries the SYNTHESIS across
+    them, because an amendment that drops the vote to 80% and an original that
+    never had Kaufman language are two different facts and collapsing them loses
+    the distinction the whole screen turns on.
+    """
+    from .declaration import analyze
+    from .docs import OcrUnavailable, extract
+
+    if not (file.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(415, "Upload the recorded instrument as a PDF.")
+    blob = await file.read()
+    if len(blob) > MAX_PDF_BYTES:
+        raise HTTPException(413, f"PDF is larger than {MAX_PDF_BYTES // (1024*1024)}MB.")
+
+    con = connect()
+    try:
+        if not con.execute("SELECT 1 FROM target WHERE group_key=?", (group_key,)).fetchone():
+            raise HTTPException(404, "no such condo group")
+        DECL_DIR.mkdir(parents=True, exist_ok=True)
+        # Named by folio prefix so the CLI path and the upload path share a
+        # folder; suffixed when a building has several instruments.
+        stem = "".join(c for c in group_key if c.isalnum())
+        dest = DECL_DIR / f"{stem}.pdf"
+        n = 2
+        while dest.exists():
+            dest = DECL_DIR / f"{stem}-{n}.pdf"
+            n += 1
+        dest.write_bytes(blob)
+
+        try:
+            text, source = extract(dest)
+        except OcrUnavailable as exc:
+            dest.unlink(missing_ok=True)
+            raise HTTPException(503, str(exc))
+
+        if len(text.strip()) < 200:
+            dest.unlink(missing_ok=True)
+            raise HTTPException(
+                422, "Almost no text came out of this PDF even after OCR. It may be "
+                     "a cover page, a very poor scan, or an image at too low a "
+                     "resolution to read.")
+
+        f = analyze(text)
+        row = f.as_doc_row()
+        # OCR output is noisier; a high-confidence read off guessed characters is
+        # not a high-confidence read.
+        if source.endswith("ocr") and row["confidence"] == "high":
+            row["confidence"] = "medium"
+        rel = str(dest.relative_to(ROOT_DIR)).replace("\\", "/")
+        con.execute(
+            """INSERT OR REPLACE INTO declaration_doc
+               (group_key, source, doc_type, termination_threshold, threshold_pct,
+                kaufman_present, rofr, leasehold, age_restricted, text_source,
+                confidence, notes, reviewed)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,date('now'))""",
+            (group_key, rel, row["doc_type"], row["termination_threshold"],
+             row["threshold_pct"], row["kaufman_present"], row["rofr"],
+             row["leasehold"], row["age_restricted"], source, row["confidence"],
+             row["notes"]))
+        con.commit()
+        syn = _resynthesise(con, group_key)
+        return {
+            "ok": True, "stored": rel, "text_source": source,
+            "characters": len(text),
+            "document": row,
+            "snippets": {
+                "threshold": f.threshold_snippet,
+                "kaufman": (f.kaufman_snippets or [None])[0],
+                "rofr": f.rofr_snippet, "leasehold": f.leasehold_snippet,
+                "age": f.age_snippet,
+            },
+            "warnings": f.warnings,
+            "synthesis": syn,
+        }
+    finally:
+        con.close()
+
+
+@router.get("/api/target/{group_key}/declarations")
+def list_declarations(group_key: str):
+    """Every document reviewed for a building, with the operative synthesis."""
+    from .declaration import synthesise
+    con = db()
+    try:
+        docs = [dict(r) for r in con.execute(
+            "SELECT * FROM declaration_doc WHERE group_key=? ORDER BY recorded_year, id",
+            (group_key,))]
+        return {"group_key": group_key, "documents": docs, "synthesis": synthesise(docs)}
+    finally:
+        con.close()
+
+
+@router.delete("/api/target/{group_key}/declaration/{doc_id}")
+def delete_declaration(group_key: str, doc_id: int):
+    """Remove one misread document. The synthesis is recomputed without it —
+    a bad OCR pass should not be permanent."""
+    con = connect()
+    try:
+        cur = con.execute("DELETE FROM declaration_doc WHERE id=? AND group_key=?",
+                          (doc_id, group_key))
+        con.commit()
+        if not cur.rowcount:
+            raise HTTPException(404, "no such document for this building")
+        return {"ok": True, "synthesis": _resynthesise(con, group_key)}
     finally:
         con.close()
 

@@ -330,6 +330,14 @@
       <div class="note">One buyer behind several LLCs shows up here before it shows up in any single owner name.</div>
 
       <h3>Declaration review</h3>
+      <div id="t-docs"><p class="msg">Loading documents…</p></div>
+      <div class="upload">
+        <label class="upload-btn">
+          <input type="file" id="f-pdf" accept="application/pdf,.pdf" hidden />
+          <span>Upload a recorded declaration (PDF)</span>
+        </label>
+        <span class="msg" id="f-pdf-msg"></span>
+      </div>
       <div class="form">
         <label>Termination threshold
           <select id="f-thr"><option value="">Not reviewed</option>
@@ -397,6 +405,8 @@
     loadEconomics(key);
     drawConcentration(d);
     loadBeneficial(key);
+    loadDeclarations(key);
+    wireUpload(key);
   }
 
   // What moved. The rest of the screen answers "what does this building look
@@ -442,6 +452,89 @@
         tr.style.cursor = 'pointer';
         tr.addEventListener('click', () => selectTarget(tr.dataset.k, true));
       }
+    });
+  }
+
+  // Retrieval stays manual -- the Clerk's site is an SPA with no documented
+  // query API, and a scraper that breaks silently is worse than a search box.
+  // The REVIEW being CLI-only was the part that made no sense.
+  const DOC_LABEL = { original: 'Original declaration', amendment: 'Amendment',
+                      unknown: 'Unclassified' };
+
+  async function loadDeclarations(key) {
+    const box = el('t-docs');
+    if (!box) return;
+    let d;
+    try { d = await fetchJSON(`/api/target/${encodeURIComponent(key)}/declarations`); }
+    catch (e) { box.innerHTML = ''; return; }
+    if (!d.documents.length) {
+      box.innerHTML = `<div class="note">No declaration has been read for this building.
+        Everything below is unverified until one is.</div>`;
+      return;
+    }
+    const syn = d.synthesis || {};
+    const rows = d.documents.map((x) => `<tr>
+      <td>${esc(DOC_LABEL[x.doc_type] || x.doc_type || '—')}
+        ${x.text_source && x.text_source.includes('ocr') ? '<span class="tag warm">OCR</span>' : ''}</td>
+      <td class="n">${esc(x.termination_threshold || '—')}</td>
+      <td class="n">${x.kaufman_present ? 'yes' : 'no'}</td>
+      <td class="n">${['rofr', 'leasehold', 'age_restricted'].filter((k) => x[k])
+        .map((k) => ({ rofr: 'ROFR', leasehold: 'lease', age_restricted: '55+' })[k]).join(' ') || '—'}</td>
+      <td class="n dim">${esc(x.confidence || '')}</td>
+      <td class="n"><button type="button" class="link-btn" data-doc="${x.id}">remove</button></td></tr>`).join('');
+
+    box.innerHTML = `
+      <table class="mini"><thead><tr><th>Document</th><th class="n">Threshold</th>
+        <th class="n">Kaufman</th><th class="n">Flags</th><th class="n">Confidence</th>
+        <th></th></tr></thead><tbody>${rows}</tbody></table>
+      <div class="note"><b>Operative terms.</b> Threshold ${esc(syn.termination_threshold || '—')}
+        ${syn.threshold_from ? `(from the ${esc(syn.threshold_from)})` : ''} ·
+        Kaufman in the original: <b>${syn.kaufman_original == null ? 'unresolved'
+          : syn.kaufman_original ? 'yes' : 'no'}</b>${syn.kaufman_by_amendment ? ', added by amendment' : ''}.
+        The latest amendment sets the vote; Kaufman comes from the original and nowhere else.</div>
+      ${(syn.warnings || []).map((w) => `<div class="note warn">${esc(w)}</div>`).join('')}`;
+
+    for (const b of box.querySelectorAll('button[data-doc]')) {
+      b.addEventListener('click', async () => {
+        b.disabled = true;
+        await fetch(`/api/target/${encodeURIComponent(key)}/declaration/${b.dataset.doc}`,
+                    { method: 'DELETE' });
+        loadDeclarations(key);
+        loadTargets();
+      });
+    }
+  }
+
+  function wireUpload(key) {
+    const input = el('f-pdf'), msg = el('f-pdf-msg');
+    if (!input) return;
+    input.addEventListener('change', async () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      msg.textContent = 'Reading… a scanned declaration needs OCR and can take minutes.';
+      const body = new FormData();
+      body.append('file', file);
+      let res, data;
+      try {
+        res = await fetch(`/api/target/${encodeURIComponent(key)}/declaration`,
+                          { method: 'POST', body });
+        data = await res.json();
+      } catch (e) { msg.textContent = 'Upload failed.'; return; }
+      input.value = '';
+      if (!res.ok) { msg.textContent = data.detail || 'Could not read that PDF.'; return; }
+      const d = data.document;
+      msg.textContent = `Read as ${DOC_LABEL[d.doc_type] || d.doc_type} via `
+        + `${data.text_source} — threshold ${d.termination_threshold || 'not found'}, `
+        + `Kaufman ${d.kaufman_present ? 'present' : 'absent'}.`;
+      // The verbatim snippets are the point: this is a reading aid, not authority.
+      const snips = Object.entries(data.snippets || {}).filter(([, v]) => v);
+      if (snips.length) {
+        el('t-docs').insertAdjacentHTML('beforeend',
+          `<div class="note"><b>What it read.</b>${snips.map(([k, v]) =>
+            `<div class="snip"><i>${esc(k)}</i> “${esc(String(v).slice(0, 300))}”</div>`).join('')}</div>`);
+      }
+      loadDeclarations(key);
+      loadTargets();
     });
   }
 

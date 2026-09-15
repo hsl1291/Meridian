@@ -257,10 +257,52 @@ CREATE TABLE IF NOT EXISTS target (
     top_owner_changed    INTEGER,
     -- Concentration rising while the owner count falls. Either alone is noise;
     -- together they are somebody buying the building.
-    assembly_flag        INTEGER
+    assembly_flag        INTEGER,
+    -- Synthesised across declaration_doc, NULL until a document is reviewed.
+    -- Appended, like every column before them: build_targets.py inserts
+    -- positionally, so a column added in the MIDDLE silently shifts every value
+    -- after it into the wrong field.
+    rofr             INTEGER,
+    leasehold        INTEGER,
+    age_restricted   INTEGER,
+    declaration_docs INTEGER
 );
 CREATE INDEX IF NOT EXISTS ix_target_score ON target(score DESC);
 CREATE INDEX IF NOT EXISTS ix_target_assembly ON target(conc_delta DESC);
+
+-- ── declaration documents ─────────────────────────────────────────────────
+-- One row per document reviewed, kept whole.
+--
+-- stage2 --extract used to write straight into target's stage-2 columns, so an
+-- amendment overwrote the original declaration's findings in the same fields --
+-- and the distinction between those two documents is the entire point of the
+-- screen. The 3d DCA ruled against a developer whose Kaufman language was added
+-- BY AMENDMENT after it held 183 of 192 units; Kaufman in the ORIGINAL is what
+-- carries weight. Collapsing them loses the case.
+--
+-- target now holds the SYNTHESIS across a building's documents (see
+-- declaration.synthesise); this holds what each document actually said.
+CREATE TABLE IF NOT EXISTS declaration_doc (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_key    TEXT NOT NULL,
+    source       TEXT,              -- path or URL the text came from
+    doc_type     TEXT,              -- original | amendment | unknown
+    recorded_year INTEGER,          -- from the instrument where stated
+    or_book      TEXT,
+    or_page      TEXT,
+    termination_threshold TEXT,
+    threshold_pct REAL,
+    kaufman_present INTEGER,
+    rofr           INTEGER,
+    leasehold      INTEGER,
+    age_restricted INTEGER,
+    text_source   TEXT,             -- embedded | ocr -- OCR is noisier
+    confidence    TEXT,
+    notes         TEXT,
+    reviewed      TEXT,
+    UNIQUE (group_key, source)
+);
+CREATE INDEX IF NOT EXISTS ix_decl_group ON declaration_doc(group_key);
 
 -- ── history ───────────────────────────────────────────────────────────────
 -- build_targets.py opens with DELETE FROM condo_group and DELETE FROM target,
@@ -486,6 +528,10 @@ _ADDED_COLUMNS = [
     ("main", "target", "corporate_pct_delta", "REAL"),
     ("main", "target", "top_owner_changed", "INTEGER"),
     ("main", "target", "assembly_flag", "INTEGER"),
+    ("main", "target", "rofr", "INTEGER"),
+    ("main", "target", "leasehold", "INTEGER"),
+    ("main", "target", "age_restricted", "INTEGER"),
+    ("main", "target", "declaration_docs", "INTEGER"),
 ]
 
 

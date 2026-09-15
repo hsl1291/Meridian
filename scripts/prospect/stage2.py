@@ -11,6 +11,9 @@ expensive part.
                  findings back to the target table
     --status     how much of the shortlist has been reviewed
 
+Uploading a PDF in the building drawer does the same thing, so this is the bulk
+path rather than the only one.
+
 RETRIEVAL IS MANUAL, ON PURPOSE. The Miami-Dade Clerk's Official Records site is
 a client-rendered SPA with no documented query API; every route returns the same
 shell, so there is nothing stable to automate against. Rather than ship a
@@ -89,54 +92,86 @@ def cmd_worklist(con, args):
           f"then run: scripts\\prospect\\stage2.py --extract")
 
 
-def pdf_text(path):
-    try:
-        from pypdf import PdfReader
-    except ImportError:
-        raise SystemExit("pypdf is not installed -- venv\\Scripts\\python.exe -m pip install pypdf")
-    reader = PdfReader(str(path))
-    return "\n".join((p.extract_text() or "") for p in reader.pages)
-
-
 def cmd_extract(con, args):
+    """Read every PDF in data/declarations/ and file it against its building.
+
+    Each document is now stored whole in declaration_doc and the target row
+    carries the synthesis across them. Before, findings went straight into
+    target's stage-2 columns, so an amendment overwrote the original
+    declaration's -- and that distinction is the entire screen.
+    """
+    from backend.prospect.declaration import synthesise
+    from backend.prospect.docs import OcrUnavailable, extract
+
     DECL_DIR.mkdir(parents=True, exist_ok=True)
     pdfs = sorted(DECL_DIR.glob("*.pdf"))
     if not pdfs:
         print(f"no PDFs in {DECL_DIR} -- run --worklist first, then save declarations there")
         return
     done = skipped = 0
+    touched = set()
     for p in pdfs:
-        key = p.stem
+        # <folio prefix>.pdf, or <folio prefix>-2.pdf for a second instrument.
+        key = p.stem.split("-")[0]
         row = con.execute("SELECT condo_name FROM target WHERE group_key=?", (key,)).fetchone()
         if not row:
             print(f"  ?? {p.name}: no target with folio prefix {key} — skipped")
             skipped += 1
             continue
-        text = pdf_text(p)
-        if len(text.strip()) < 200:
-            print(f"  !! {p.name}: almost no extractable text — this is likely a SCANNED "
-                  f"image PDF and needs OCR before it can be read")
+        try:
+            text, source = extract(p)
+        except OcrUnavailable as exc:
+            print(f"  !! {p.name}: {exc}")
             skipped += 1
             continue
+        if len(text.strip()) < 200:
+            print(f"  !! {p.name}: almost no text even after OCR — a cover page, or a "
+                  f"scan too poor to read")
+            skipped += 1
+            continue
+
         f = analyze(text)
-        r = f.as_row()
+        r = f.as_doc_row()
+        if source.endswith("ocr") and r["confidence"] == "high":
+            r["confidence"] = "medium"   # guessed characters are not a high-confidence read
+        rel = str(p.relative_to(ROOT)).replace("\\", "/")
         con.execute(
-            """UPDATE target SET termination_threshold=?, kaufman_original=?,
-               kaufman_by_amendment=?, declaration_source_url=?, stage2_notes=?,
-               stage2_verified=? WHERE group_key=?""",
-            (r["termination_threshold"], r["kaufman_original"], r["kaufman_by_amendment"],
-             str(p.relative_to(ROOT)).replace("\\", "/"), r["stage2_notes"],
-             1 if (args.mark_verified and f.confidence == "high") else 0, key))
+            """INSERT OR REPLACE INTO declaration_doc
+               (group_key, source, doc_type, termination_threshold, threshold_pct,
+                kaufman_present, rofr, leasehold, age_restricted, text_source,
+                confidence, notes, reviewed)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,date('now'))""",
+            (key, rel, r["doc_type"], r["termination_threshold"], r["threshold_pct"],
+             r["kaufman_present"], r["rofr"], r["leasehold"], r["age_restricted"],
+             source, r["confidence"], r["notes"]))
+        touched.add(key)
         done += 1
-        print(f"  ok {row['condo_name'][:38]:<38} threshold={f.termination_threshold or '?':<18}"
-              f" kaufman(orig/amend)={f.kaufman_original}/{f.kaufman_by_amendment}"
-              f" doc={f.doc_type} conf={f.confidence}")
+        flags = "".join(c for c, on in (("R", r["rofr"]), ("L", r["leasehold"]),
+                                        ("A", r["age_restricted"])) if on) or "-"
+        print(f"  ok {(row['condo_name'] or '')[:34]:<34} {r['doc_type']:<9}"
+              f" thr={r['termination_threshold'] or '?':<18} kaufman={r['kaufman_present']}"
+              f" flags={flags:<3} via={source} conf={r['confidence']}")
         for wmsg in f.warnings:
             print(f"       ! {wmsg}")
+
+    for key in sorted(touched):
+        docs = [dict(x) for x in con.execute(
+            "SELECT * FROM declaration_doc WHERE group_key=? ORDER BY recorded_year, id",
+            (key,))]
+        syn = synthesise(docs)
+        con.execute(
+            """UPDATE target SET termination_threshold=?, kaufman_original=?,
+               kaufman_by_amendment=?, rofr=?, leasehold=?, age_restricted=?,
+               declaration_docs=?, stage2_verified=? WHERE group_key=?""",
+            (syn["termination_threshold"], syn["kaufman_original"],
+             syn["kaufman_by_amendment"], syn["rofr"], syn["leasehold"],
+             syn["age_restricted"], syn["declaration_docs"],
+             1 if args.mark_verified else 0, key))
+        for w in syn["warnings"]:
+            print(f"  ! {key}: {w}")
     con.commit()
-    print(f"\n{done} extracted, {skipped} skipped.")
-    print("stage2_verified is only auto-set on high-confidence reads with --mark-verified; "
-          "everything else stays unverified until a human ticks it in the UI.")
+    print(f"\n{done} document(s) filed across {len(touched)} building(s), {skipped} skipped.")
+    print("stage2_verified stays 0 unless --mark-verified; a human ticks it in the UI.")
 
 
 def cmd_status(con, args):
@@ -173,7 +208,7 @@ def main():
     ap.add_argument("--limit", type=int, default=250)
     ap.add_argument("--min-score", type=float, default=0.0)
     ap.add_argument("--mark-verified", action="store_true",
-                    help="auto-tick stage2_verified on high-confidence reads")
+                    help="auto-tick stage2_verified on the buildings touched")
     args = ap.parse_args()
     con = connect()
     try:

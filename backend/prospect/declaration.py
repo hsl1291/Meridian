@@ -48,6 +48,34 @@ _AMENDMENT_TITLE_RE = re.compile(
 _ORIGINAL_TITLE_RE = re.compile(
     r"\bdeclaration\s+of\s+condominium\b(?!.{0,40}\bamend)", re.I | re.S)
 
+# ── other terms that kill a deal ───────────────────────────────────────────
+# Three more findings, because the threshold and Kaufman are not the only things
+# that stop an assembly. Each needs its own context test: the bare phrase appears
+# in declarations that do not impose the thing it names.
+
+# A right of first refusal routes every unit purchase through the board, which
+# throttles quiet assembly whatever the termination vote says.
+_ROFR_RE = re.compile(
+    r"\bright\s+of\s+first\s+refusal\b|\bfirst\s+right\s+of\s+refusal\b|"
+    r"\bright\s+to\s+(?:purchase|acquire)\s+(?:the\s+)?(?:unit|interest)\b", re.I)
+_ROFR_CONTEXT_RE = re.compile(
+    r"\b(sale|sell|transfer|convey\w*|lease|assign\w*|purchas\w*)\b", re.I)
+
+# A recreation lease or leasehold land means the fee under the building is not
+# necessarily yours to redevelop -- it can survive termination entirely.
+_LEASE_RE = re.compile(
+    r"\brecreation(?:al)?\s+(?:facilit\w+\s+)?lease\b|\bground\s+lease\b|"
+    r"\blong[- ]term\s+lease\b|\bleasehold\s+(?:interest|estate)\b", re.I)
+_LEASE_CONTEXT_RE = re.compile(
+    r"\b(lessor|lessee|demised|rent|term\s+of\s+(?:the\s+)?lease|99\s+years?)\b", re.I)
+
+# A 55+ covenant changes both the buyer pool and the politics of relocation.
+_AGE_RE = re.compile(
+    r"\bhousing\s+for\s+older\s+persons\b|"
+    r"\b(?:fifty[- ]five|55)\s*(?:\(\s*55\s*\))?\s*years?\s+(?:of\s+age\s+)?or\s+(?:older|over)\b|"
+    r"\badult\s+(?:only\s+)?community\b", re.I)
+
+
 # ── termination threshold ──────────────────────────────────────────────────
 _WORD_NUM = {
     "fifty": 50, "sixty": 60, "sixty-six": 66, "seventy": 70, "seventy-five": 75,
@@ -89,6 +117,12 @@ class DeclarationFindings:
     kaufman_by_amendment: bool | None = None
     kaufman_snippets: list[str] = field(default_factory=list)
     doc_type: str | None = None          # original | amendment | unknown
+    rofr: bool = False
+    rofr_snippet: str | None = None
+    leasehold: bool = False
+    leasehold_snippet: str | None = None
+    age_restricted: bool = False
+    age_snippet: str | None = None
     confidence: str = "low"              # low | medium | high
     warnings: list[str] = field(default_factory=list)
 
@@ -100,12 +134,31 @@ class DeclarationFindings:
             "stage2_notes": self.note(),
         }
 
+    def as_doc_row(self):
+        """One reviewed document, kept whole. The target table holds the
+        SYNTHESIS across documents; this holds what each one actually said."""
+        return {
+            "doc_type": self.doc_type,
+            "termination_threshold": self.termination_threshold,
+            "threshold_pct": self.threshold_pct,
+            "kaufman_present": int(self.kaufman_present),
+            "rofr": int(self.rofr),
+            "leasehold": int(self.leasehold),
+            "age_restricted": int(self.age_restricted),
+            "confidence": self.confidence,
+            "notes": self.note(),
+        }
+
     def note(self):
         bits = [f"doc={self.doc_type or 'unknown'}", f"confidence={self.confidence}"]
         if self.threshold_snippet:
             bits.append(f'threshold ctx: "{self.threshold_snippet[:220]}"')
         if self.kaufman_snippets:
             bits.append(f'kaufman ctx: "{self.kaufman_snippets[0][:220]}"')
+        for label, on in (("ROFR", self.rofr), ("leasehold", self.leasehold),
+                          ("55+", self.age_restricted)):
+            if on:
+                bits.append(label)
         bits += self.warnings
         return " | ".join(bits)
 
@@ -164,6 +217,15 @@ def find_threshold(text: str):
     return best[2], best[1], best[3]
 
 
+def _flag(text, pattern, context, before=300, after=400):
+    """True plus the snippet, only where a supporting term sits nearby. The bare
+    phrase shows up in declarations that do not impose the thing it names."""
+    for window, _m in _windows(text, pattern, before, after):
+        if context is None or context.search(window):
+            return True, _clean(window)
+    return False, None
+
+
 def analyze(text: str) -> DeclarationFindings:
     """Read a declaration (or an amendment to one) and report its termination terms."""
     f = DeclarationFindings()
@@ -174,6 +236,10 @@ def analyze(text: str) -> DeclarationFindings:
     f.doc_type = classify_document(text)
     label, pct, snip = find_threshold(text)
     f.termination_threshold, f.threshold_pct, f.threshold_snippet = label, pct, snip
+
+    f.rofr, f.rofr_snippet = _flag(text, _ROFR_RE, _ROFR_CONTEXT_RE)
+    f.leasehold, f.leasehold_snippet = _flag(text, _LEASE_RE, _LEASE_CONTEXT_RE)
+    f.age_restricted, f.age_snippet = _flag(text, _AGE_RE, None)
 
     present, snippets = find_kaufman(text)
     f.kaufman_present = present
@@ -200,6 +266,73 @@ def analyze(text: str) -> DeclarationFindings:
     if not label:
         f.warnings.append("no termination vote requirement found in the text")
     return f
+
+
+# ── synthesis across a building's documents ────────────────────────────────
+
+def synthesise(docs: list[dict]) -> dict:
+    """The operative terms, from every document reviewed for one building.
+
+    Precedence is not "most recent wins", because the two findings answer
+    different questions:
+
+      threshold        the latest AMENDMENT that states one, else the original.
+                       An amendment that changes the vote is the operative vote.
+
+      kaufman_original comes from the ORIGINAL declaration and nowhere else. An
+                       amendment saying the Act applies as amended from time to
+                       time does NOT make it original -- that is precisely the
+                       fact pattern the 3d DCA rejected, and reading it as
+                       original would turn the tool's central distinction into
+                       a rubber stamp.
+
+    The deal-killers (ROFR, leasehold, 55+) are ORed across documents: an
+    amendment can add one, and nothing here assumes a later document removed it.
+    Repeal has to be read by a human, so a removal is not inferred from silence.
+    """
+    if not docs:
+        return {}
+    def year(d):
+        return d.get("recorded_year") or 0
+    originals = [d for d in docs if d.get("doc_type") == "original"]
+    amendments = sorted([d for d in docs if d.get("doc_type") == "amendment"], key=year)
+    unknown = [d for d in docs if d.get("doc_type") not in ("original", "amendment")]
+
+    thr = next((d for d in reversed(amendments) if d.get("termination_threshold")), None)
+    if thr is None:
+        thr = next((d for d in originals if d.get("termination_threshold")), None)
+    if thr is None:
+        thr = next((d for d in unknown if d.get("termination_threshold")), None)
+
+    orig_k = None
+    if originals:
+        orig_k = any(bool(d.get("kaufman_present")) for d in originals)
+    by_amend = any(bool(d.get("kaufman_present")) for d in amendments) or None
+    if by_amend and orig_k:
+        by_amend = False          # already original; the amendment adds nothing
+
+    warnings = []
+    if not originals:
+        warnings.append(
+            "No ORIGINAL declaration among the documents reviewed, so whether Kaufman "
+            "language was in it is unresolved — which is the question that decides "
+            "whether the statutory 80% reaches this building.")
+    if unknown:
+        warnings.append(
+            f"{len(unknown)} document(s) could not be classified as the original or an "
+            "amendment; their findings are included but their precedence is a guess.")
+
+    return {
+        "termination_threshold": thr.get("termination_threshold") if thr else None,
+        "threshold_from": thr.get("doc_type") if thr else None,
+        "kaufman_original": None if orig_k is None else int(orig_k),
+        "kaufman_by_amendment": None if by_amend is None else int(bool(by_amend)),
+        "rofr": int(any(d.get("rofr") for d in docs)),
+        "leasehold": int(any(d.get("leasehold") for d in docs)),
+        "age_restricted": int(any(d.get("age_restricted") for d in docs)),
+        "declaration_docs": len(docs),
+        "warnings": warnings,
+    }
 
 
 # ── self-test ──────────────────────────────────────────────────────────────

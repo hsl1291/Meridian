@@ -51,7 +51,7 @@ ASSOC_RE = re.compile(r"\b(ASSOC|ASSN|ASSOCIATION|HOA|HOMEOWNERS?|CONDOMINIUM)\b
 # tables in main() rather than trusted -- a silent drift here is the "table has N
 # columns but M values were supplied" that only shows up mid-load.
 GROUP_COLS = 36
-TARGET_COLS = 45
+TARGET_COLS = 49
 SNAPSHOT_COLS = 15
 
 
@@ -317,6 +317,39 @@ def write_snapshot(con, roll_year, roll_type):
     return len(rows)
 
 
+def restore_declarations(con):
+    """Put reviewed declaration findings back after the rebuild.
+
+    build_targets drops and rewrites `target`, so a rebuild would otherwise erase
+    every stage-2 finding an analyst entered -- the most expensive data in the
+    app, since each one cost somebody reading a recorded instrument.
+    declaration_doc is never touched by a rebuild, so the synthesis is recomputed
+    from it rather than preserved, which also picks up any change to the
+    precedence rules since the last run.
+    """
+    from backend.prospect.declaration import synthesise
+    keys = [r[0] for r in con.execute(
+        "SELECT DISTINCT group_key FROM declaration_doc")]
+    restored = 0
+    for key in keys:
+        docs = [dict(r) for r in con.execute(
+            "SELECT * FROM declaration_doc WHERE group_key=? ORDER BY recorded_year, id",
+            (key,))]
+        syn = synthesise(docs)
+        if not syn:
+            continue
+        cur = con.execute(
+            """UPDATE target SET termination_threshold=?, kaufman_original=?,
+               kaufman_by_amendment=?, rofr=?, leasehold=?, age_restricted=?,
+               declaration_docs=? WHERE group_key=?""",
+            (syn["termination_threshold"], syn["kaufman_original"],
+             syn["kaufman_by_amendment"], syn["rofr"], syn["leasehold"],
+             syn["age_restricted"], syn["declaration_docs"], key))
+        restored += cur.rowcount
+    con.commit()
+    return restored
+
+
 # ── pass 3: score ──────────────────────────────────────────────────────────
 def curve(value, lo, hi):
     """Linear 0-100 between lo and hi."""
@@ -387,6 +420,11 @@ def score_all(con, matches, prior=None):
             g["lon"], g["lat"],
             g["homestead_pct"], s_resist,
             *movement(g, prior.get(key)),
+            # rofr, leasehold, age_restricted, declaration_docs — owned by
+            # declaration review, not by the build. Written null here because the
+            # whole table is rebuilt, then restored by restore_declarations()
+            # below from declaration_doc, which a rebuild never touches.
+            None, None, None, None,
         ))
 
     con.executemany(f"INSERT INTO target VALUES ({','.join('?' * TARGET_COLS)})", rows)
@@ -421,6 +459,9 @@ def main():
     n = score_all(con, matches, prior)
     snaps = write_snapshot(con, roll_year, CFG.get("roll_type", ""))
     print(f"snapshot: {snaps:,} rows written for roll {roll_year}")
+    restored = restore_declarations(con)
+    if restored:
+        print(f"declaration review restored on {restored:,} building(s)")
     log_ingest(con, "build_targets", started,
                datetime.now().isoformat(timespec="seconds"), n, "derived rebuild")
 
