@@ -16,6 +16,7 @@ Everything else keeps the path it had.
 """
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import sqlite3
@@ -445,7 +446,17 @@ async def upload_declaration(group_key: str, file: UploadFile = File(...)):
         dest.write_bytes(blob)
 
         try:
-            text, source = extract(dest)
+            # In a thread, not awaited directly. extract() falls back to OCR for
+            # anything without an embedded text layer -- which is essentially
+            # every declaration in the target set, recorded roughly 1965-1990 and
+            # scanned -- and OCR runs pdftoppm/tesseract via subprocess.run for
+            # up to several hundred pages. Called directly inside this async
+            # route, that blocks Uvicorn's single event loop for the ENTIRE
+            # duration: every other tab, every map request, everything queues
+            # behind one PDF until it finishes. asyncio.to_thread moves the
+            # blocking work off the loop so the rest of the app stays responsive
+            # while a declaration is being read.
+            text, source = await asyncio.to_thread(extract, dest)
         except OcrUnavailable as exc:
             dest.unlink(missing_ok=True)
             raise HTTPException(503, str(exc))

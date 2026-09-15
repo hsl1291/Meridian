@@ -3503,109 +3503,109 @@ def markets():
                          "LIHTC/QCT/DDA, seismic & wildfire hazard.")}
 
 
+def _zoning_candidates(minx, miny, maxx, maxy):
+    """Which sources to query for this viewport, metro (hand-wired) ones first.
+
+    Capped at 8 total -- the ceiling this endpoint has always had -- so a huge
+    bbox still bounds its fan-out; it just runs that fan-out CONCURRENTLY now
+    instead of one request at a time.
+    """
+    def intersects(b):
+        x0, y0, x1, y1 = b
+        return not (maxx < x0 or minx > x1 or maxy < y0 or miny > y1)
+
+    out = []
+    for co_no, cfgs in METRO_ZONING.items():
+        cb = COUNTY_BBOX.get(co_no)
+        if cb is None or intersects(cb):
+            out.extend(("metro", cfg) for cfg in cfgs)
+
+    bx0, by0, bx1, by1 = minx - 0.35, miny - 0.35, maxx + 0.35, maxy + 0.35
+    for c in CITY_ZONING:
+        if not c.get("url") or not c.get("code"):
+            continue  # tolerate malformed harvested entries
+        clon, clat = c.get("lon", 999), c.get("lat", 999)
+        if bx0 <= clon <= bx1 and by0 <= clat <= by1:
+            out.append(("city", c))
+    return out[:8]
+
+
+async def _fetch_zoning_source(client, kind, cfg, env, limit):
+    """One upstream zoning query, fully self-contained -- so it can run
+    concurrently with the others via asyncio.wait instead of one at a time."""
+    code_field, desc_field = cfg["code"], cfg.get("desc")
+    out_fields = [code_field] + ([desc_field] if desc_field else [])
+    params = {
+        "geometry": env, "geometryType": "esriGeometryEnvelope", "inSR": "4326",
+        "outSR": "4326", "spatialRel": "esriSpatialRelIntersects",
+        "outFields": ",".join(out_fields), "returnGeometry": "true",
+        "geometryPrecision": "5", "resultRecordCount": str(limit), "f": "geojson",
+    }
+    try:
+        r = await client.get(f"{cfg['url']}/query", params=params)
+        r.raise_for_status()
+        gj = r.json()
+    except (httpx.HTTPError, ValueError):
+        return []
+
+    muni = cfg["muni"] if kind == "metro" else f"{cfg.get('city')}, {cfg.get('state')}"
+    skip_rx = cfg.get("skip_rx") if kind == "metro" else None
+    feats = []
+    for ft in gj.get("features") or []:
+        props = ft.get("properties") or {}
+        code = props.get(code_field)
+        if code in (None, "", " "):
+            continue
+        if skip_rx and re.match(skip_rx, str(code).strip(), re.I):
+            continue
+        zone = str(code).strip()
+        ft["properties"] = {
+            "zone": zone,
+            "desc": (str(props.get(desc_field)).strip() if desc_field and props.get(desc_field) else None),
+            "muni": muni,
+            "category": _zone_category(zone, muni),
+            "max_stories": _zone_stories(zone),
+        }
+        feats.append(ft)
+    return feats
+
+
 @app.get("/api/zoning-overlay")
 async def zoning_overlay(bbox: str = Query(...), limit: int = Query(1500, le=4000)):
     """Return zoning polygons (as GeoJSON) for every wired metro service whose data
     intersects the viewport bbox. Expands the visual zoning layer beyond tri-county
-    to all the metros in METRO_ZONING. bbox = 'minLon,minLat,maxLon,maxLat'."""
+    to all the metros in METRO_ZONING. bbox = 'minLon,minLat,maxLon,maxLat'.
+
+    Fanned out CONCURRENTLY across up to 8 upstream services, bounded by one
+    overall ~12s deadline via asyncio.wait rather than a per-call await in a
+    for-loop -- the previous version could take up to 8 x 12s = 96s worst case
+    on a viewport that intersects every wired source, because each upstream call
+    waited for the last one to finish before starting. Panning with the live
+    zoning layer on was the single slowest thing on the map because of this.
+    """
     try:
         minx, miny, maxx, maxy = (float(v) for v in bbox.split(","))
     except ValueError:
         raise HTTPException(400, "bbox must be 'minLon,minLat,maxLon,maxLat'")
 
-    # Which county adapters intersect the bbox (use COUNTY_BBOX where known, else all).
-    def intersects(b):
-        x0, y0, x1, y1 = b
-        return not (maxx < x0 or minx > x1 or maxy < y0 or miny > y1)
-
-    candidate_cfgs = []
-    for co_no, cfgs in METRO_ZONING.items():
-        cb = COUNTY_BBOX.get(co_no)
-        if cb is None or intersects(cb):
-            candidate_cfgs.extend(cfgs)
+    candidates = _zoning_candidates(minx, miny, maxx, maxy)
+    if not candidates:
+        return {"type": "FeatureCollection", "features": []}
 
     env = json.dumps({"xmin": minx, "ymin": miny, "xmax": maxx, "ymax": maxy,
                       "spatialReference": {"wkid": 4326}})
-    features: list = []
-    # Bound the serial fan-out: at most ~8 upstream calls and a ~12s total deadline,
-    # so a huge bbox or a regional outage can't stack timeouts for minutes.
-    upstream_calls = 0
-    deadline = time.monotonic() + 12.0
     async with httpx.AsyncClient(timeout=12.0) as client:
-        for cfg in candidate_cfgs:
-            if len(features) >= limit or upstream_calls >= 8 or time.monotonic() > deadline:
-                break
-            out_fields = [cfg["code"]] + ([cfg["desc"]] if cfg.get("desc") else [])
-            params = {
-                "geometry": env, "geometryType": "esriGeometryEnvelope", "inSR": "4326",
-                "outSR": "4326", "spatialRel": "esriSpatialRelIntersects",
-                "outFields": ",".join(out_fields), "returnGeometry": "true",
-                "geometryPrecision": "5", "resultRecordCount": str(limit), "f": "geojson",
-            }
-            upstream_calls += 1
+        tasks = [asyncio.ensure_future(_fetch_zoning_source(client, kind, cfg, env, limit))
+                 for kind, cfg in candidates]
+        done, pending = await asyncio.wait(tasks, timeout=12.0)
+        for t in pending:
+            t.cancel()
+        features: list = []
+        for t in done:
             try:
-                r = await client.get(f"{cfg['url']}/query", params=params)
-                r.raise_for_status()
-                gj = r.json()
-            except (httpx.HTTPError, ValueError):
+                features.extend(t.result())
+            except Exception:  # noqa: BLE001 -- one bad source must not drop the rest
                 continue
-            for ft in (gj.get("features") or []):
-                props = ft.get("properties") or {}
-                code = props.get(cfg["code"])
-                if code in (None, "", " "):
-                    continue
-                if cfg.get("skip_rx") and re.match(cfg["skip_rx"], str(code).strip(), re.I):
-                    continue
-                zone = str(code).strip()
-                ft["properties"] = {
-                    "zone": zone,
-                    "desc": (str(props.get(cfg["desc"])).strip() if cfg.get("desc") and props.get(cfg["desc"]) else None),
-                    "muni": cfg["muni"],
-                    "category": _zone_category(zone, cfg["muni"]),
-                    "max_stories": _zone_stories(zone),
-                }
-                features.append(ft)
-
-        # Also pull harvested CITY_ZONING services near the viewport so the colored
-        # overlay covers all completed cities (not just the hand-wired metros).
-        bx0, by0, bx1, by1 = minx - 0.35, miny - 0.35, maxx + 0.35, maxy + 0.35
-        for c in CITY_ZONING:
-            if len(features) >= limit or upstream_calls >= 8 or time.monotonic() > deadline:
-                break
-            if not c.get("url") or not c.get("code"):
-                continue  # tolerate malformed harvested entries
-            clon, clat = c.get("lon", 999), c.get("lat", 999)
-            if not (bx0 <= clon <= bx1 and by0 <= clat <= by1):
-                continue
-            out_fields = [c["code"]] + ([c["desc"]] if c.get("desc") else [])
-            params = {
-                "geometry": env, "geometryType": "esriGeometryEnvelope", "inSR": "4326",
-                "outSR": "4326", "spatialRel": "esriSpatialRelIntersects",
-                "outFields": ",".join(out_fields), "returnGeometry": "true",
-                "geometryPrecision": "5", "resultRecordCount": str(limit - len(features)), "f": "geojson",
-            }
-            upstream_calls += 1
-            try:
-                r = await client.get(f"{c['url']}/query", params=params)
-                r.raise_for_status()
-                gj = r.json()
-            except (httpx.HTTPError, ValueError):
-                continue
-            muni = f"{c.get('city')}, {c.get('state')}"
-            for ft in (gj.get("features") or []):
-                props = ft.get("properties") or {}
-                code = props.get(c["code"])
-                if code in (None, "", " "):
-                    continue
-                zone = str(code).strip()
-                ft["properties"] = {
-                    "zone": zone,
-                    "desc": (str(props.get(c["desc"])).strip() if c.get("desc") and props.get(c["desc"]) else None),
-                    "muni": muni,
-                    "category": _zone_category(zone, muni),
-                    "max_stories": _zone_stories(zone),
-                }
-                features.append(ft)
     return {"type": "FeatureCollection", "features": features[:limit]}
 
 

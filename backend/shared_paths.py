@@ -27,7 +27,7 @@ APP_ROOT = Path(__file__).resolve().parent.parent
 
 
 def shared_root() -> Path:
-    """Locate the shared store.
+    r"""Locate the shared store.
 
     The default is INSIDE the app folder, at ``data/_shared``, so downloading
     this repository and running it from wherever it landed works with no paths to
