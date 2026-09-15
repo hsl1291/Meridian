@@ -17,6 +17,8 @@ land/parent parcels are useful for site-level enrichment later, but nothing in
 the target ranking depends on it.
 """
 from pathlib import Path
+
+from ..shared_paths import shared_db
 import os
 import re
 import sqlite3
@@ -35,24 +37,9 @@ DB_PATH = ROOT / "data" / "prospect.db"
 # databases -- so every existing query keeps working unchanged, provided these
 # tables are NOT also created in main (see _split_schema).
 
-def _shared_root() -> Path:
-    r"""Locate the shared store. Checked in order so a copied install works
-    wherever it is unzipped, without anyone editing a path:
-      1. APPS_SHARED env var (explicit wins)
-      2. a `_shared` folder beside this app's folder  <- the shareable layout
-      3. C:\Apps\_shared                              <- the original install
-    """
-    env = os.environ.get("APPS_SHARED")
-    if env:
-        return Path(env)
-    sibling = Path(__file__).resolve().parent.parent.parent.parent / "_shared"
-    if sibling.is_dir():
-        return sibling
-    return Path(r"C:\Apps\_shared")
 
 
-SHARED_DB = Path(os.environ.get("APPS_SHARED_DB")
-                 or _shared_root() / "shared.db")
+SHARED_DB = shared_db()
 
 SHARED_TABLES = {
     # national market intelligence (Module C)
@@ -101,7 +88,23 @@ CREATE TABLE IF NOT EXISTS nal_condo_unit (
     -- protected. NULL means the roll's exemption column could not be resolved,
     -- which is not the same as zero (see ingest_nal.py).
     homestead    INTEGER,
-    homestead_val REAL
+    homestead_val REAL,
+    -- Sale qualification. The README states the roll "carries no qualification
+    -- code"; the published NAL layout documents QUAL_CD1 and VI_CD1, so that was
+    -- untested rather than untrue. Resolved from the header like homestead --
+    -- NULL means the roll carried no such column, which is not the same as a
+    -- sale being unqualified.
+    qual_cd1     TEXT,
+    vi_cd1       TEXT,
+    sale_mo1     INTEGER,
+    -- The SECOND prior sale. A unit that traded twice in three years is a signal
+    -- the schema could not see at all.
+    sale_prc2    REAL,
+    sale_yr2     INTEGER,
+    sale_mo2     INTEGER,
+    qual_cd2     TEXT,
+    or_book2     TEXT,
+    or_page2     TEXT
 );
 CREATE INDEX IF NOT EXISTS ix_nal_group ON nal_condo_unit(group_key);
 CREATE INDEX IF NOT EXISTS ix_nal_owner ON nal_condo_unit(owner_norm);
@@ -269,6 +272,24 @@ CREATE TABLE IF NOT EXISTS target (
 );
 CREATE INDEX IF NOT EXISTS ix_target_score ON target(score DESC);
 CREATE INDEX IF NOT EXISTS ix_target_assembly ON target(conc_delta DESC);
+
+-- ── deal state ────────────────────────────────────────────────────────────
+-- stage2_verified was the only workflow field on a target, which made the table
+-- a list of facts rather than something you work from. Kept OUT of `target`
+-- deliberately: a rebuild rewrites that table, and losing where a deal had got
+-- to because a new tax roll shipped would be the worst possible bug here.
+CREATE TABLE IF NOT EXISTS deal_state (
+    group_key TEXT PRIMARY KEY,
+    stage     TEXT NOT NULL,
+    updated   TEXT
+);
+CREATE TABLE IF NOT EXISTS deal_note (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    group_key TEXT NOT NULL,
+    created   TEXT,
+    body      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS ix_note_group ON deal_note(group_key, created DESC);
 
 -- ── declaration documents ─────────────────────────────────────────────────
 -- One row per document reviewed, kept whole.
@@ -518,6 +539,15 @@ _ADDED_COLUMNS = [
     ("shared", "nal_condo_unit", "county", "TEXT"),
     ("shared", "nal_condo_unit", "homestead", "INTEGER"),
     ("shared", "nal_condo_unit", "homestead_val", "REAL"),
+    ("shared", "nal_condo_unit", "qual_cd1", "TEXT"),
+    ("shared", "nal_condo_unit", "vi_cd1", "TEXT"),
+    ("shared", "nal_condo_unit", "sale_mo1", "INTEGER"),
+    ("shared", "nal_condo_unit", "sale_prc2", "REAL"),
+    ("shared", "nal_condo_unit", "sale_yr2", "INTEGER"),
+    ("shared", "nal_condo_unit", "sale_mo2", "INTEGER"),
+    ("shared", "nal_condo_unit", "qual_cd2", "TEXT"),
+    ("shared", "nal_condo_unit", "or_book2", "TEXT"),
+    ("shared", "nal_condo_unit", "or_page2", "TEXT"),
     ("main", "condo_group", "homestead_units", "INTEGER"),
     ("main", "condo_group", "homestead_pct", "REAL"),
     ("main", "target", "homestead_pct", "REAL"),

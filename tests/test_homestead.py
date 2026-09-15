@@ -28,6 +28,27 @@ NAL_COLUMNS = ["PARCEL_ID", "DOR_UC", "OWN_NAME", "OWN_ADDR1", "OWN_CITY", "OWN_
                "OR_BOOK1", "OR_PAGE1", "S_LEGAL"]
 
 
+def nal_columns():
+    """Column order of nal_condo_unit, from the schema itself.
+
+    The ingest yields positional tuples, so a test that hardcodes an index breaks
+    the moment a column is appended -- which is exactly what happened when the
+    qualification codes went in. Resolving by name tests the real contract.
+    """
+    import re
+
+    from backend.prospect.db import SCHEMA
+    m = re.search(r"CREATE TABLE IF NOT EXISTS nal_condo_unit\s*\((.*?)\n\);", SCHEMA, re.S)
+    return [ln.strip().split()[0] for ln in m.group(1).splitlines()
+            if ln.strip() and not ln.strip().startswith("--")]
+
+
+def col(rows, name):
+    """One column out of the ingest's positional tuples, by name."""
+    i = nal_columns().index(name)
+    return [r[i] for r in rows]
+
+
 def load(name, path):
     spec = importlib.util.spec_from_file_location(name, ROOT / path)
     m = importlib.util.module_from_spec(spec)
@@ -69,9 +90,8 @@ def test_homestead_resolves_from_the_header(tmp_path, capsys):
 
     rows = list(nal.rows_from_zip())
     assert "homestead resolved to column 'JV_HMSTD'" in capsys.readouterr().out
-    # homestead, homestead_val are the last two fields.
-    assert [r[-2] for r in rows] == [1, 0, 0]
-    assert rows[0][-1] == 50000.0
+    assert col(rows, "homestead") == [1, 0, 0]
+    assert col(rows, "homestead_val")[0] == 50000.0
 
 
 def test_a_roll_without_the_column_reports_unknown_not_zero(tmp_path, capsys):
@@ -85,7 +105,8 @@ def test_a_roll_without_the_column_reports_unknown_not_zero(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "no homestead column found" in out
     assert "--show-header" in out
-    assert rows[0][-2] is None and rows[0][-1] is None
+    assert col(rows, "homestead")[0] is None
+    assert col(rows, "homestead_val")[0] is None
 
 
 def test_candidates_are_tried_in_order(tmp_path, capsys):
@@ -94,7 +115,7 @@ def test_candidates_are_tried_in_order(tmp_path, capsys):
                         extra_columns=["AV_HMSTD"])
     rows = list(nal.rows_from_zip())
     assert "'AV_HMSTD'" in capsys.readouterr().out
-    assert rows[0][-2] == 1
+    assert col(rows, "homestead")[0] == 1
 
 
 def test_non_condo_rows_are_still_skipped(tmp_path):
@@ -175,3 +196,33 @@ def test_insert_arity_matches_the_schema(table, script, const):
     cols = [l.strip().split()[0] for l in m.group(1).splitlines()
             if l.strip() and not l.strip().startswith("--")]
     assert len(cols) == getattr(load(script.replace("/", "_"), script), const)
+
+
+# ── sale qualification and the second prior sale ───────────────────────────
+
+def test_qualification_codes_are_captured_when_the_roll_carries_them(tmp_path, capsys):
+    """The README says the roll has no qualification code; the published NAL
+    layout documents QUAL_CD1/VI_CD1. Whichever is true for a given roll, the
+    ingest reports it rather than assuming."""
+    nal = load("nal_q", "scripts/prospect/ingest_nal.py")
+    nal.RAW = make_roll(tmp_path, [
+        condo("0101010000001", QUAL_CD1="01", VI_CD1="I", SALE_MO1="6",
+              SALE_PRC2="310000", SALE_YR2="2019"),
+    ], extra_columns=["QUAL_CD1", "VI_CD1", "SALE_MO1", "SALE_PRC2", "SALE_YR2"])
+    rows = list(nal.rows_from_zip())
+    out = capsys.readouterr().out
+    assert "QUAL_CD1" in out and "arm's-length filtering is available" in out
+    assert col(rows, "qual_cd1")[0] == "01"
+    assert col(rows, "sale_mo1")[0] == 6
+    assert col(rows, "sale_prc2")[0] == 310000.0
+
+
+def test_a_roll_without_them_stores_null_not_a_default(tmp_path, capsys):
+    """NULL means the roll carried no such column, which is not the same as a
+    sale being unqualified — and a filter must not treat it as one."""
+    nal = load("nal_nq", "scripts/prospect/ingest_nal.py")
+    nal.RAW = make_roll(tmp_path, [condo("0101010000001")])
+    rows = list(nal.rows_from_zip())
+    assert "optional columns absent" in capsys.readouterr().out
+    for c in ("qual_cd1", "vi_cd1", "sale_mo1", "sale_prc2", "qual_cd2"):
+        assert col(rows, c)[0] is None, c

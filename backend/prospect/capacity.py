@@ -23,27 +23,14 @@ import json
 import math
 import os
 from pathlib import Path
+
+from ..shared_paths import shared_layers
 from threading import RLock
 
 
-def _shared_root() -> Path:
-    r"""Locate the shared store. Checked in order so a copied install works
-    wherever it is unzipped, without anyone editing a path:
-      1. APPS_SHARED env var (explicit wins)
-      2. a `_shared` folder beside this app's folder  <- the shareable layout
-      3. C:\Apps\_shared                              <- the original install
-    """
-    env = os.environ.get("APPS_SHARED")
-    if env:
-        return Path(env)
-    sibling = Path(__file__).resolve().parent.parent.parent.parent / "_shared"
-    if sibling.is_dir():
-        return sibling
-    return Path(r"C:\Apps\_shared")
 
 
-LAYERS_DIR = Path(os.environ.get("APPS_SHARED_LAYERS")
-                  or _shared_root() / "layers")
+LAYERS_DIR = shared_layers()
 
 SQFT_PER_ACRE = 43_560.0
 

@@ -20,6 +20,10 @@ import argparse
 import json
 import os
 import sys
+from pathlib import Path as _P
+
+sys.path.insert(0, str(_P(__file__).resolve().parents[1]))
+from backend.shared_paths import shared_layers  # noqa: E402
 import time
 from pathlib import Path
 
@@ -76,25 +80,12 @@ LAYERS: list[dict] = [
      "fields": "OBJECTID,FLD_ZONE,ZONE_SUBTY,STATIC_BFE", "simplify": 0.0002},
 ]
 
-def _shared_root() -> Path:
-    r"""Same resolution order the apps use (see backend/shared_data.py):
-      1. APPS_SHARED env var
-      2. a `_shared` folder beside the app folder   <- the shareable layout
-      3. C:\Apps\_shared                            <- the original install
-    """
-    env = os.environ.get("APPS_SHARED")
-    if env:
-        return Path(env)
-    sibling = Path(__file__).resolve().parent.parent.parent / "_shared"
-    if sibling.is_dir():
-        return sibling
-    return Path(r"C:\Apps\_shared")
 
 
 # These polygons are shared: the map draws them and capacity.py resolves zoning
 # against them for development capacity. Writing them into Groundwork's own
 # data/ would leave Prospect with nothing to read.
-OUT_DIR = Path(os.environ.get("APPS_SHARED_LAYERS") or _shared_root() / "layers")
+OUT_DIR = shared_layers()
 PAGE = 2000
 RETRIES = 3
 TIMEOUT = 90.0

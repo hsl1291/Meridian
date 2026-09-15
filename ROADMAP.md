@@ -146,18 +146,24 @@ Add `recert_status`, `recert_due_date`, `unsafe_case_open` and a
 `score_distress` term, and let the table filter on the open-case flag — that is a
 search somebody runs every morning.
 
-### 1.3 Sale qualification codes — check the header first *(half a day if present)*
+### 1.3 Sale qualification codes  ✅ done (resolves at ingest)
 
 The README states the roll "carries no qualification code, so intra-family and
 other non-arm's-length transfers are not filtered out." The published FDOR NAL
 layout documents `QUAL_CD1` / `VI_CD1`, and the same pair for the second sale.
 `ingest_nal.py` never asks for them, so this is untested rather than untrue.
 
-Print the header of the cached zip. If the columns are there, the comps caveat
-that currently qualifies every price in every memo — and every figure Phase 2
-derives from those comps — goes away for one afternoon's work. While in there,
-capture `SALE_MO1` (month, not just year) and the **second** sale: a unit that
-traded twice in three years is a signal the current schema cannot see at all.
+**Built so the roll answers the question rather than me.** `QUAL_CD1`, `VI_CD1`,
+`SALE_MO1` and the entire second sale are now resolved from the header the same
+way homestead is: captured where present, `NULL` where absent, and reported
+either way. `--show-header` states outright whether the README's note holds for
+your roll.
+
+The comps engine filters to an arm's-length set (`comps.arms_length_codes` in
+config.json, defaulting to `01`/`02`) **only where the roll carries a code** — a
+`NULL` means the column was absent, and dropping those would silently empty the
+comp set on every roll predating the field. *We cannot tell* is not
+*disqualified*. Excluded sales are counted and reported as a gap.
 
 ### 1.4 Re-weight and document *(1 day)*
 
@@ -519,11 +525,11 @@ itself. With one vintage it says so rather than rendering zeros.
 
 ---
 
-## Phase 7 — declaration review at scale
+## Phase 7 — declaration review at scale  ✅ done
 
 **9 days.** Stage 2 is the strategic asset and the most manual thing here.
 
-### 7.1 OCR *(2 days)*
+### 7.1 OCR  ✅ done
 
 `cmd_extract` bails with "this is likely a SCANNED image PDF" below 200
 characters of extracted text. The target set is buildings recorded roughly
@@ -533,7 +539,7 @@ or a hosted OCR behind `pdf_text`, cache the text beside the PDF, and record
 which path produced it: OCR output is noisier and `find_threshold` needs to know
 that before reporting high confidence.
 
-### 7.2 Bring stage 2 into the app *(3 days)*
+### 7.2 Bring stage 2 into the app  ✅ done
 
 Retrieval being manual is a sound decision. The *review* being CLI-only is not.
 Today an analyst runs `--worklist`, gets an xlsx, saves PDFs into a folder named
@@ -547,7 +553,7 @@ shares this retrieval problem, so do them together. Until then let an analyst
 enter aggregate debt by hand and have the waterfall flag every figure computed
 without it.
 
-### 7.3 Extractor hardening *(3 days)*
+### 7.3 Extractor hardening  ✅ done
 
 `declaration.py` is validated by four hand-written samples it passes by
 construction. Before anyone relies on `termination_threshold` at volume it needs
@@ -561,7 +567,7 @@ is the original as amended, and today an amendment PDF overwrites the original's
 findings in the same columns), **right of first refusal**, **recreation leases**,
 and **55+ covenants**.
 
-### 7.4 Re-test Clerk retrieval *(1 day, timeboxed)*
+### 7.4 Re-test Clerk retrieval  ✂ dropped
 
 Worth thirty minutes with the network tab before accepting "no documented query
 API" permanently. The SPA is talking to something. If a stable JSON endpoint
@@ -587,25 +593,28 @@ of the coastal counties.
 
 ## Also worth doing
 
-- **Deal pipeline state.** `stage2_verified` is the only workflow field on a
-  target. A status enum (screened / researching / contacted / LOI / dead) with a
-  timestamp and a note log turns the table into something a team works from. ~2 days.
-- **Portability.** `_shared_root()` is duplicated in three files, and its
+- **Deal pipeline state.** ✅ Done. `deal_state` and `deal_note`, deliberately
+  OUTSIDE `target`: a rebuild rewrites that table every time a new roll lands,
+  and losing where a deal had got to because the data refreshed would be the
+  worst bug in this app.
+- **Portability.** ✅ Done, and it was **five** copies, not three. One
+  `backend/shared_paths.py`, and the fallback is platform-aware — , and its
   `C:\Apps\_shared` fallback is a *relative* path off Windows — so an
   unconfigured POSIX run creates that name as a directory in the working
   directory instead of reporting that the store is not configured (found in
-  Phase 0; `tests/conftest.py` now cleans it up). Make it one import, and make
-  the fallback platform-aware. `launch.py` and `install.py` are Windows-only,
-  which is fine for one box but not for the Dockerfile. ~1 day.
-- **Roll provenance in the UI.** `ingest_log` is populated and exposed through
-  `/api/condo/stats`, but a user reading a score cannot see it came from a
-  *preliminary* 2026 roll. Put the vintage in the Records header. ~2h.
+  Phase 0; `tests/conftest.py` now cleans it up). Make it one import`launch.py` and `install.py` stay Windows-only, which is
+  fine for one box. A test asserts the resolver exists in exactly one place.
+- **Roll provenance in the UI.** ✅ Done — county, roll year, roll type and the
+  last build date above the Records table.
 - **Failures are silent in the map UI.** `loadTargetPins` and several sibling
   fetches are `catch (e) { return; }` — an endpoint that 500s and an empty result
   set look identical to the user, which is exactly the ambiguity that makes "is
   the map working" hard to answer. Surface a one-line failure state per layer. ~1 day.
-- **`/api/selftest`.** The app needs ~53MB of fetched layers plus a ~330MB shared
-  store, and has no way to report which are present. A route listing each
+- **`/api/selftest`.** ✅ Done. Reports every dataset, its path, whether it
+  resolved, its row count and the script that builds it — so *built and found
+  nothing* is distinguishable from *never built*, which a 503 cannot say.
+  Previously: the app needs ~53MB of fetched layers plus a ~330MB shared store,
+  and had no way to report which are present. A route listing each
   dataset, its path, and whether it resolved would make the question answerable
   by the app instead of by reading logs. It also closes the built-but-empty gap
   Phase 0 left open: row counts distinguish a screen that found nothing from one
@@ -621,9 +630,10 @@ of the coastal counties.
 - **FastAPI `regex=` is deprecated** in favour of `pattern=` at
   `site_screen.py:917` and `app.py:2615`. Two lines, and a warning that becomes a
   break. ~10m.
-- **Memo and DD report charts.** Out of scope for Phase 3, which is in-app only.
-  Worth revisiting once `charts.js` exists, since the geometry ports directly and
-  the memo is what a recipient actually sees. ~2 days.
+- **Memo and DD report charts.** ✅ The broken one is fixed: `_sparkline` now
+  shares `charts.js`'s geometry, labels its endpoints, carries no literal colour
+  and is described for a screen reader. Richer server-side charts remain
+  available but unbuilt — the fix was the part that was wrong.
 
 ---
 
@@ -637,7 +647,7 @@ Phase 3  ████████████                    6d   DONE
 Phase 4  ████████████████                8d   DONE
 Phase 5  ██████████████                  7d   DONE
 Phase 6  ██████████████████              9d   DONE
-Phase 7  ██████████████████              9d   declarations at scale
+Phase 7  ██████████████████              9d   DONE
 Phase 8  ██████████                      5d   coverage
                                         ───
                                         58d

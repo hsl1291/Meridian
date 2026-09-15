@@ -196,7 +196,19 @@
     tDebounce = setTimeout(() => { loadTargets(); loadTargetPins(false); }, 220);
   }
 
+  async function loadProvenance() {
+    const box = el('t-provenance');
+    if (!box) return;
+    try {
+      const st = await fetchJSON('/api/condo/stats');
+      if (!st.provenance) return;
+      box.textContent = st.provenance;
+      box.hidden = false;
+    } catch (e) { /* the table still works without the badge */ }
+  }
+
   async function initRecords() {
+    loadProvenance();
     try {
       const cities = await fetchJSON('/api/condo/cities');
       el('t-city').innerHTML = '<option value="">All cities</option>' +
@@ -329,6 +341,9 @@
         <tbody>${mail}</tbody></table>
       <div class="note">One buyer behind several LLCs shows up here before it shows up in any single owner name.</div>
 
+      <h3>Deal</h3>
+      <div id="t-deal"><p class="msg">Loading…</p></div>
+
       <h3>Declaration review</h3>
       <div id="t-docs"><p class="msg">Loading documents…</p></div>
       <div class="upload">
@@ -406,6 +421,7 @@
     drawConcentration(d);
     loadBeneficial(key);
     loadDeclarations(key);
+    loadDeal(key);
     wireUpload(key);
   }
 
@@ -455,6 +471,39 @@
     });
   }
 
+  // Deal state lives outside `target` because a rebuild rewrites that table
+  // every time a new roll lands, and losing where a deal had got to because the
+  // data refreshed would be the worst bug in this app.
+  async function loadDeal(key) {
+    const box = el('t-deal');
+    if (!box) return;
+    let d;
+    try { d = await fetchJSON(`/api/target/${encodeURIComponent(key)}/deal`); }
+    catch (e) { box.innerHTML = ''; return; }
+    const opts = d.stages.map((st) =>
+      `<option value="${esc(st)}"${st === d.stage ? ' selected' : ''}>${esc(st)}</option>`).join('');
+    box.innerHTML = `
+      <div class="form">
+        <label>Stage <select id="d-stage">${opts}</select></label>
+        <label class="wide">Add a note <textarea id="d-note" rows="2"
+          placeholder="What happened, and what is next"></textarea></label>
+      </div>
+      <div class="actions"><button class="primary-btn solid" id="d-save">Save</button>
+        <span class="msg" id="d-msg">${d.updated ? 'Updated ' + esc(d.updated.slice(0, 16)) : ''}</span></div>
+      ${d.notes.length ? `<table class="mini"><tbody>${d.notes.map((n) =>
+        `<tr><td class="dim" style="width:96px">${esc((n.created || '').slice(0, 16))}</td>
+             <td>${esc(n.body)}</td></tr>`).join('')}</tbody></table>` : ''}`;
+
+    el('d-save').addEventListener('click', async () => {
+      const res = await fetch(`/api/target/${encodeURIComponent(key)}/deal`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ stage: el('d-stage').value, note: el('d-note').value || null }),
+      });
+      el('d-msg').textContent = res.ok ? 'Saved.' : 'Save failed.';
+      if (res.ok) loadDeal(key);
+    });
+  }
+
   // Retrieval stays manual -- the Clerk's site is an SPA with no documented
   // query API, and a scraper that breaks silently is worse than a search box.
   // The REVIEW being CLI-only was the part that made no sense.
@@ -500,6 +549,7 @@
         await fetch(`/api/target/${encodeURIComponent(key)}/declaration/${b.dataset.doc}`,
                     { method: 'DELETE' });
         loadDeclarations(key);
+    loadDeal(key);
         loadTargets();
       });
     }
@@ -534,6 +584,7 @@
             `<div class="snip"><i>${esc(k)}</i> “${esc(String(v).slice(0, 300))}”</div>`).join('')}</div>`);
       }
       loadDeclarations(key);
+    loadDeal(key);
       loadTargets();
     });
   }

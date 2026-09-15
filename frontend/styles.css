@@ -976,3 +976,10 @@ body { display: flex; }
 .snip { margin-top: 6px; font-size: 11.5px; line-height: 1.5; color: var(--text-muted); }
 .snip i { font-style: normal; font-weight: 600; color: var(--text-dim);
   text-transform: uppercase; letter-spacing: .06em; font-size: 9.5px; margin-right: 6px; }
+
+/* A score means nothing without the roll vintage behind it, and "preliminary" is
+   a materially different claim from a certified roll. */
+.ws-provenance {
+  font-size: 11px; color: var(--text-dim); letter-spacing: .02em;
+  padding: 0 2px 8px; font-variant-numeric: tabular-nums;
+}

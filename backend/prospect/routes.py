@@ -65,7 +65,12 @@ def condo_stats():
             "shortlist": shortlist, "concentrated_20pct": conc,
             "stage2_verified": verified,
             "roll": f"{CFG['roll_year']} {CFG['roll_type']}",
+            "roll_year": CFG["roll_year"], "roll_type": CFG["roll_type"],
             "county": CFG["county"], "ingests": ing,
+            # A score means nothing without the vintage it was computed from, and
+            # "preliminary" is a materially different claim from a certified roll.
+            "provenance": (f"{CFG['county']} · {CFG['roll_year']} {CFG['roll_type']} roll"
+                           + (f" · last built {ing[0]['finished'][:10]}" if ing else "")),
         }
     finally:
         con.close()
@@ -251,6 +256,121 @@ def save_stage2(group_key: str, body: Stage2):
         return {"ok": True}
     finally:
         con.close()
+
+
+class DealState(BaseModel):
+    stage: str
+    note: str | None = None
+
+
+@router.get("/api/target/{group_key}/deal")
+def get_deal(group_key: str):
+    con = db()
+    try:
+        row = con.execute("SELECT stage, updated FROM deal_state WHERE group_key=?",
+                          (group_key,)).fetchone()
+        notes = [dict(x) for x in con.execute(
+            "SELECT id, created, body FROM deal_note WHERE group_key=? "
+            "ORDER BY created DESC, id DESC LIMIT 50", (group_key,))]
+        return {"group_key": group_key,
+                "stage": row["stage"] if row else "screened",
+                "updated": row["updated"] if row else None,
+                "stages": CFG["pipeline"]["stages"], "notes": notes}
+    finally:
+        con.close()
+
+
+@router.post("/api/target/{group_key}/deal")
+def set_deal(group_key: str, body: DealState):
+    """Move a building along, optionally with a note.
+
+    Deal state lives outside `target` on purpose: a rebuild rewrites that table
+    every time a new tax roll lands, and losing where a deal had got to because
+    the data refreshed would be the worst bug in this app.
+    """
+    stages = CFG["pipeline"]["stages"]
+    if body.stage not in stages:
+        raise HTTPException(422, f"stage must be one of {stages}")
+    con = connect()
+    try:
+        if not con.execute("SELECT 1 FROM target WHERE group_key=?", (group_key,)).fetchone():
+            raise HTTPException(404, "no such condo group")
+        con.execute(
+            "INSERT INTO deal_state (group_key, stage, updated) VALUES (?,?,datetime('now')) "
+            "ON CONFLICT(group_key) DO UPDATE SET stage=excluded.stage, updated=excluded.updated",
+            (group_key, body.stage))
+        if body.note and body.note.strip():
+            con.execute("INSERT INTO deal_note (group_key, created, body) "
+                        "VALUES (?, datetime('now'), ?)", (group_key, body.note.strip()))
+        con.commit()
+        return {"ok": True, "stage": body.stage}
+    finally:
+        con.close()
+
+
+@router.get("/api/selftest")
+def selftest():
+    """Which datasets are actually present, and what builds each missing one.
+
+    The app needs ~53MB of fetched layers plus a ~330MB shared store, and had no
+    way to say which of them resolved. It also closes the gap a 503 cannot: a
+    table that exists with zero rows is a screen that was BUILT and found
+    nothing, which is a different fact from one that was never built, and the two
+    are indistinguishable from the UI.
+    """
+    import sqlite3 as _sq
+
+    from ..shared_paths import shared_db, shared_layers
+    from .db import DB_PATH
+
+    out = {"checks": [], "ok": True}
+
+    def add(name, present, detail, fix=None, rows=None):
+        out["checks"].append({"name": name, "present": bool(present), "detail": detail,
+                              "rows": rows, "fix": fix})
+        if not present:
+            out["ok"] = False
+
+    add("prospect database", DB_PATH.exists(), str(DB_PATH),
+        "scripts/prospect/build_targets.py")
+    sdb = shared_db()
+    add("shared store", sdb.exists(),
+        f"{str(sdb)}{f' ({sdb.stat().st_size / 1e6:.0f}MB)' if sdb.exists() else ''}",
+        "set APPS_SHARED_DB, or APPS_SHARED to the folder holding shared.db")
+    lay = shared_layers()
+    n_layers = len(list(lay.glob("*.geojson"))) if lay.is_dir() else 0
+    add("map layers", n_layers > 0, f"{n_layers} layer file(s) in {lay}",
+        "scripts/fetch_layers.py", rows=n_layers)
+    for fname, fix in (("zori_rents.json", "scripts/fetch_zori.py"),
+                       ("zcta_pop.json", "scripts/fetch_zcta_population.py"),
+                       ("cbsa.geojson", "scripts/fetch_cbsa_geo.py")):
+        f = ROOT_DIR / "data" / fname
+        add(fname, f.exists(), str(f), fix)
+
+    # Row counts separate "built and empty" from "never built".
+    tables = [("target", "scripts/prospect/build_targets.py"),
+              ("nal_condo_unit", "scripts/prospect/ingest_nal.py"),
+              ("dbpr_association", "scripts/prospect/ingest_dbpr.py"),
+              ("market", "scripts/prospect/build_markets.py"),
+              ("migration_flow", "scripts/prospect/ingest_market.py"),
+              ("declaration_doc", "upload a declaration in the building drawer"),
+              ("target_snapshot", "scripts/prospect/build_targets.py")]
+    try:
+        con = db()
+        for t, fix in tables:
+            try:
+                n = con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
+                add(f"table {t}", n > 0,
+                    f"{n:,} rows" if n else "table exists but is empty — built and "
+                                            "found nothing, or never populated",
+                    fix, rows=n)
+            except _sq.OperationalError:
+                add(f"table {t}", False, "table does not exist", fix, rows=0)
+        con.close()
+    except _sq.OperationalError as exc:
+        add("database connection", False, str(exc),
+            "see the shared store check above")
+    return out
 
 
 # ═══ declaration review, in the app ════════════════════════════════════════

@@ -49,6 +49,14 @@ BATCH = 20_000
 # `--show-header` prints it.
 HOMESTEAD_CANDIDATES = ("JV_HMSTD", "AV_HMSTD", "HMSTD_VAL", "JV_HOMESTEAD")
 
+# Sale qualification and the second prior sale. Same treatment and same reason:
+# resolved from the header, reported, and NULL when the roll does not carry them.
+# The README says the roll has no qualification code; the published NAL layout
+# documents QUAL_CD1/VI_CD1, so --show-header settles it either way.
+OPTIONAL_COLUMNS = ("QUAL_CD1", "VI_CD1", "SALE_MO1",
+                    "SALE_PRC2", "SALE_YR2", "SALE_MO2", "QUAL_CD2",
+                    "OR_BOOK2", "OR_PAGE2")
+
 
 def download(force=False):
     if RAW.exists() and not force:
@@ -78,6 +86,16 @@ def rows_from_zip():
         missing = [n for n in need if n not in ix]
         if missing:
             raise SystemExit(f"NAL header is missing expected columns: {missing}")
+
+        opt = {c: (c in ix) for c in OPTIONAL_COLUMNS}
+        have = [c for c, ok in opt.items() if ok]
+        missing_opt = [c for c, ok in opt.items() if not ok]
+        print(f"  optional columns present: {', '.join(have) or 'none'}")
+        if missing_opt:
+            print(f"  optional columns absent:  {', '.join(missing_opt)}")
+        if "QUAL_CD1" in have:
+            print("    QUAL_CD1 is present — arm's-length filtering is available; "
+                  "see comps.arms_length_codes in config.json.")
 
         hmstd_col = next((c for c in HOMESTEAD_CANDIDATES if c in ix), None)
         if hmstd_col:
@@ -139,6 +157,15 @@ def rows_from_zip():
                 # facts and the objection model depends on which one it is.
                 *( (1 if (hv := num(row, hmstd_col)) and hv > 0 else 0, hv)
                    if hmstd_col else (None, None) ),
+                g(row, "QUAL_CD1") if opt["QUAL_CD1"] else None,
+                g(row, "VI_CD1") if opt["VI_CD1"] else None,
+                integer(row, "SALE_MO1") if opt["SALE_MO1"] else None,
+                num(row, "SALE_PRC2") if opt["SALE_PRC2"] else None,
+                integer(row, "SALE_YR2") if opt["SALE_YR2"] else None,
+                integer(row, "SALE_MO2") if opt["SALE_MO2"] else None,
+                g(row, "QUAL_CD2") if opt["QUAL_CD2"] else None,
+                g(row, "OR_BOOK2") if opt["OR_BOOK2"] else None,
+                g(row, "OR_PAGE2") if opt["OR_PAGE2"] else None,
             )
         print(f"  scanned {total:,} NAL rows")
 
@@ -147,7 +174,7 @@ def rows_from_zip():
 # a `county` column because the FDOR roll is published per county; this script
 # loads Dade, so every row is stamped with it.
 COUNTY = "DADE"
-COLS = 28
+COLS = 37
 INSERT = f"INSERT OR REPLACE INTO nal_condo_unit VALUES ({','.join('?' * COLS)})"
 
 
@@ -169,6 +196,11 @@ def main():
             print("   " + "  ".join(f"{c:<16}" for c in header[i:i + 6]))
         hit = [c for c in HOMESTEAD_CANDIDATES if c in header]
         print(f"\nhomestead candidates present: {hit or 'NONE -- update HOMESTEAD_CANDIDATES'}")
+        opt = [c for c in OPTIONAL_COLUMNS if c in header]
+        print(f"optional columns present:     {opt or 'NONE'}")
+        print("QUAL_CD1 present — the README's 'no qualification code' note is wrong"
+              if "QUAL_CD1" in header else
+              "QUAL_CD1 absent — the README's note stands for this roll")
         return
     started = datetime.now().isoformat(timespec="seconds")
     t0 = time.time()

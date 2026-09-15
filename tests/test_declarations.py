@@ -203,3 +203,43 @@ def test_a_rebuild_restores_declaration_findings():
     assert row["kaufman_original"] == 1
     assert row["rofr"] == 1
     assert row["declaration_docs"] == 1
+
+
+# ── shared paths ───────────────────────────────────────────────────────────
+
+def test_the_windows_fallback_is_not_used_off_windows(monkeypatch, tmp_path):
+    """Path(r"C:\\Apps\\_shared") is absolute on Windows and RELATIVE everywhere
+    else, so an unconfigured POSIX run created that name as a directory in the
+    working directory and wrote a store into it."""
+    import os
+
+    from backend import shared_paths
+
+    monkeypatch.delenv("APPS_SHARED", raising=False)
+    monkeypatch.delenv("APPS_SHARED_DB", raising=False)
+    monkeypatch.setattr(os, "name", "posix")
+    root = shared_paths.shared_root()
+    assert root.is_absolute()
+    assert "C:" not in str(root)
+
+
+def test_an_explicit_override_always_wins(monkeypatch, tmp_path):
+    from backend import shared_paths
+    monkeypatch.setenv("APPS_SHARED", str(tmp_path))
+    assert shared_paths.shared_root() == tmp_path
+    monkeypatch.setenv("APPS_SHARED_DB", str(tmp_path / "x.db"))
+    assert shared_paths.shared_db() == tmp_path / "x.db"
+
+
+def test_the_resolver_exists_in_exactly_one_place():
+    """It was copied into five modules, each with its own chance to drift."""
+    import re
+    # Assembled from parts so this file does not match its own source.
+    pattern = re.compile(r"def " + "_shared" + r"_root\b")
+    hits = []
+    for f in ROOT.rglob("*.py"):
+        if ".git" in f.parts or f.name == "shared_paths.py":
+            continue
+        if pattern.search(f.read_text()):
+            hits.append(str(f.relative_to(ROOT)))
+    assert not hits, f"local copies of the resolver: {hits}"

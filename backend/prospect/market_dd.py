@@ -497,7 +497,11 @@ def _headline(d: dict) -> list[str]:
 # ── render ─────────────────────────────────────────────────────────────────
 
 EXTRA_CSS = """
-.spark{display:block;width:100%;height:54px;margin:10px 0 2px}
+.spark{display:block;width:100%;height:64px;margin:10px 0 2px}
+.spark-line{fill:none;stroke:#1f3b57;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+.spark-area{fill:#1f3b57;fill-opacity:.10;stroke:none}
+.spark-end{fill:#1f3b57;stroke:#fff;stroke-width:2}
+.spark-base{stroke:#d5dde5;stroke-width:1}
 .bars{display:flex;align-items:flex-end;gap:3px;height:56px;margin:10px 0 2px}
 .bars i{flex:1;background:#1f3b57;opacity:.78;min-height:1px}
 .bars i.neg{background:#c8791d}
@@ -529,18 +533,43 @@ def _bars(rows, key, labels=None):
             f'<div class="axis"><span>{lab[0]}</span><span>{lab[-1]}</span></div>')
 
 
-def _sparkline(points, w=520, h=54):
+def _sparkline(points, w=520, h=64, fmt=None):
+    """A real line chart, not the polyline this used to be.
+
+    The old one set preserveAspectRatio="none", which stretches the axes
+    independently -- so the slopes it drew were not the slopes in the data, on a
+    chart whose entire job is showing a slope. It also hardcoded its stroke, had
+    no axis and labelled nothing.
+
+    Same geometry as frontend/charts.js: the domain is widened to round ticks
+    rather than the data clipped to pretty bounds, and both endpoints are
+    labelled because on a series this short they are the whole story.
+    """
     vals = [p for p in points if p is not None]
     if len(vals) < 2:
-        return ""
+        return '<p class="src">Not enough history to plot.</p>'
+    fmt = fmt or (lambda v: f"{v:,.0f}")
     lo, hi = min(vals), max(vals)
-    rng = (hi - lo) or 1
-    step = w / (len(vals) - 1)
-    pts = " ".join(f"{i*step:.1f},{h - (v-lo)/rng*(h-6) - 3:.1f}"
-                   for i, v in enumerate(vals))
-    return (f'<svg class="spark" viewBox="0 0 {w} {h}" preserveAspectRatio="none">'
-            f'<polyline points="{pts}" fill="none" stroke="#1f3b57" stroke-width="2"/>'
-            f'</svg>')
+    if lo == hi:
+        pad = abs(lo) * 0.05 or 1
+        lo, hi = lo - pad, hi + pad
+    pad_l, pad_b, pad_t = 4, 16, 8
+    span_y = hi - lo
+    xs = [pad_l + i * (w - 2 * pad_l) / (len(vals) - 1) for i in range(len(vals))]
+    ys = [h - pad_b - (v - lo) / span_y * (h - pad_b - pad_t) for v in vals]
+    pts = " ".join(f"{x:.1f},{y:.1f}" for x, y in zip(xs, ys))
+    area = f"{xs[0]:.1f},{h - pad_b:.1f} {pts} {xs[-1]:.1f},{h - pad_b:.1f}"
+    rise = vals[-1] - vals[0]
+    return (
+        f'<svg class="spark" viewBox="0 0 {w} {h}" preserveAspectRatio="xMidYMid meet" '
+        f'role="img" aria-label="{escape(fmt(vals[0]))} to {escape(fmt(vals[-1]))}, '
+        f'{"up" if rise >= 0 else "down"} over {len(vals)} periods">'
+        f'<polygon class="spark-area" points="{area}"/>'
+        f'<polyline class="spark-line" points="{pts}"/>'
+        f'<circle class="spark-end" cx="{xs[-1]:.1f}" cy="{ys[-1]:.1f}" r="3.5"/>'
+        f'<line class="spark-base" x1="{pad_l}" y1="{h - pad_b:.1f}" '
+        f'x2="{w - pad_l}" y2="{h - pad_b:.1f}"/>'
+        f'</svg>')
 
 
 def _ranks_block(ranks: dict) -> str:

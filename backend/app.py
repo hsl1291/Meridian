@@ -23,6 +23,8 @@ import sqlite3
 import time
 from pathlib import Path
 
+from .shared_paths import shared_layers
+
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel
@@ -44,24 +46,9 @@ DATA_DIR = ROOT / "data"
 # Falls back to DATA_DIR so an install that never ran the mover still works.
 import os as _os
 
-def _shared_root() -> Path:
-    r"""Locate the shared store. Checked in order so a copied install works
-    wherever it is unzipped, without anyone editing a path:
-      1. APPS_SHARED env var (explicit wins)
-      2. a `_shared` folder beside this app's folder  <- the shareable layout
-      3. C:\Apps\_shared                              <- the original install
-    """
-    env = _os.environ.get("APPS_SHARED")
-    if env:
-        return Path(env)
-    sibling = Path(__file__).resolve().parent.parent.parent / "_shared"
-    if sibling.is_dir():
-        return sibling
-    return Path(r"C:\Apps\_shared")
 
 
-LAYERS_DIR = Path(_os.environ.get("APPS_SHARED_LAYERS")
-                  or _shared_root() / "layers")
+LAYERS_DIR = shared_layers()
 
 
 def layer_path(name: str) -> Path:

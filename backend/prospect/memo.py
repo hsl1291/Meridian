@@ -87,11 +87,36 @@ def building_sales(group_key: str, con) -> dict:
     # really a handful of bulk deeds. So sales are grouped into instruments by
     # (year, price) and a package's per-unit figure is the consideration divided
     # by the folios it covers. Only per-unit figures are ever medianed.
-    units_rows = [dict(r) for r in con.execute(
-        "SELECT folio, owner_name, sale_yr1, sale_prc1, tot_lvg_area, jv, "
-        "or_book1, or_page1, is_entity FROM nal_condo_unit "
-        "WHERE group_key=? AND sale_prc1>0 AND sale_yr1 IS NOT NULL "
-        "ORDER BY sale_yr1 DESC, sale_prc1 DESC", (group_key,))]
+    try:
+        units_rows = [dict(r) for r in con.execute(
+            "SELECT folio, owner_name, sale_yr1, sale_prc1, tot_lvg_area, jv, "
+            "or_book1, or_page1, is_entity, qual_cd1 FROM nal_condo_unit "
+            "WHERE group_key=? AND sale_prc1>0 AND sale_yr1 IS NOT NULL "
+            "ORDER BY sale_yr1 DESC, sale_prc1 DESC", (group_key,))]
+    except sqlite3.OperationalError:
+        # A roll ingested before qual_cd1 existed. Every sale is kept, which is
+        # the same outcome as a roll that carries no qualification column.
+        units_rows = [dict(r, qual_cd1=None) for r in con.execute(
+            "SELECT folio, owner_name, sale_yr1, sale_prc1, tot_lvg_area, jv, "
+            "or_book1, or_page1, is_entity FROM nal_condo_unit "
+            "WHERE group_key=? AND sale_prc1>0 AND sale_yr1 IS NOT NULL "
+            "ORDER BY sale_yr1 DESC, sale_prc1 DESC", (group_key,))]
+
+    # Arm's-length filter, applied only where the roll actually carries a code.
+    # A NULL means the column was absent, and dropping those would silently empty
+    # the comp set on every roll that predates the field -- "we cannot tell" is
+    # not "disqualified".
+    arms = set((CFG.get("comps") or {}).get("arms_length_codes") or [])
+    non_arms = 0
+    if arms:
+        keep = []
+        for r in units_rows:
+            code = (r.get("qual_cd1") or "").strip()
+            if code and code not in arms:
+                non_arms += 1
+                continue
+            keep.append(r)
+        units_rows = keep
     if not units_rows:
         gaps.append("No recorded sale carries a price for any unit in this building.")
 
@@ -147,7 +172,13 @@ def building_sales(group_key: str, con) -> dict:
         "bulk_median_per_unit": _median([s["per_unit"] for s in bulk]),
         "entity_buy_units": sum(s["units"] for s in recent if s.get("is_entity")),
         "window": f"{this_year - 5}-{this_year}",
+        "non_arms_length_excluded": non_arms,
     }
+    if non_arms:
+        gaps.append(
+            f"{non_arms} recorded sale(s) carry a qualification code outside the "
+            f"arm's-length set and were excluded from the comps. Intra-family and "
+            f"corrective deeds are not market evidence.")
     if bulk:
         gaps.append(
             f"{len(bulk)} recorded instrument(s) in the last five years convey "

@@ -146,3 +146,36 @@ def test_bulk_deeds_are_called_out_rather_than_averaged_in(memo):
 def test_what_it_could_not_confirm_is_printed_at_the_top(memo):
     head = memo[:memo.index("Sources")] if "Sources" in memo else memo
     assert "could not confirm" in head
+
+
+# ── the server-side chart ──────────────────────────────────────────────────
+
+def test_the_sparkline_no_longer_lies_about_its_slopes():
+    """It set preserveAspectRatio="none", which stretches the axes independently
+    — on a chart whose entire job is showing a slope."""
+    from backend.prospect.market_dd import _sparkline
+    svg = _sparkline([100, 120, 115, 140, 160])
+    assert 'preserveAspectRatio="none"' not in svg
+    assert 'preserveAspectRatio="xMidYMid meet"' in svg
+
+
+def test_the_sparkline_carries_no_literal_colour():
+    from backend.prospect.market_dd import _sparkline
+    assert not re.search(r"#[0-9a-fA-F]{3,6}\b", _sparkline([1, 2, 3]))
+
+
+def test_the_sparkline_is_described_for_a_screen_reader():
+    from backend.prospect.market_dd import _sparkline
+    svg = _sparkline([100, 160])
+    assert 'role="img"' in svg and "aria-label" in svg and "up" in svg
+
+
+def test_a_series_too_short_to_plot_says_so():
+    from backend.prospect.market_dd import _sparkline
+    assert "Not enough history" in _sparkline([5])
+    assert "Not enough history" in _sparkline([])
+
+
+def test_a_flat_series_does_not_divide_by_zero():
+    from backend.prospect.market_dd import _sparkline
+    assert "NaN" not in _sparkline([7, 7, 7])

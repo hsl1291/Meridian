@@ -20,25 +20,12 @@ import sqlite3
 import threading
 from pathlib import Path
 
-
-def _shared_root() -> Path:
-    r"""Locate the shared store. Checked in order so a copied install works
-    wherever it is unzipped, without anyone editing a path:
-      1. APPS_SHARED env var (explicit wins)
-      2. a `_shared` folder beside this app's folder  <- the shareable layout
-      3. C:\Apps\_shared                              <- the original install
-    """
-    env = os.environ.get("APPS_SHARED")
-    if env:
-        return Path(env)
-    sibling = Path(__file__).resolve().parent.parent.parent / "_shared"
-    if sibling.is_dir():
-        return sibling
-    return Path(r"C:\Apps\_shared")
+from .shared_paths import shared_db
 
 
-SHARED_DB = Path(os.environ.get("APPS_SHARED_DB")
-                 or _shared_root() / "shared.db")
+
+
+SHARED_DB = shared_db()
 
 _local = threading.local()
 
