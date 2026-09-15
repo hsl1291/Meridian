@@ -268,7 +268,8 @@ start.bat --reinstall      rebuild .venv from scratch
 ### Updating
 
 Double-click **`update.bat`** (`update.command` / `update.sh`), or press
-**Check for updates** in the app's **Reference** tab.
+**Check for updates** in the app's **Reference** tab. The button takes two
+clicks on purpose: the first says what would change, the second does it.
 
 Updates come from GitHub as a zip, so this works whether the folder was cloned
 or downloaded. It is plain Python — `urllib` and `zipfile`, no PowerShell and
@@ -281,6 +282,11 @@ nothing shelled out — and:
 - every replaced file is copied to `.backup\<timestamp>\` first
 - the download is unpacked in full before anything is swapped, so a dropped
   connection leaves the running copy alone
+
+Set `update.branch` in `backend\prospect\config.json` to whatever you actually
+ship from. Pointing it at a branch you no longer merge to would roll an installed
+copy **backward**, which is why the repo and branch are printed beside the button
+rather than hidden in a constant.
 
 Restart the app afterwards; the running process is still the old code until you
 do, and the app says so rather than pretending otherwise.

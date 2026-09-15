@@ -50,9 +50,28 @@ MERGED_JSON = {"backend/prospect/config.json"}
 USER_AGENT = "Groundwork-updater"
 
 
+def _configured() -> dict:
+    """`update` in config.json. Read fresh each time so editing it takes effect
+    without a restart, and tolerant of a missing or broken file because the
+    updater has to work on a copy that is already damaged."""
+    try:
+        cfg = json.loads((APP_ROOT / "backend" / "prospect" / "config.json")
+                         .read_text(encoding="utf-8"))
+        return cfg.get("update") or {}
+    except (OSError, ValueError):
+        return {}
+
+
 def _repo() -> tuple[str, str]:
-    return (os.environ.get("GROUNDWORK_REPO") or DEFAULT_REPO,
-            os.environ.get("GROUNDWORK_BRANCH") or DEFAULT_BRANCH)
+    """Environment wins, then config.json, then the built-in default.
+
+    The branch matters more than it looks: pointing this at a branch you no
+    longer merge to would roll an installed copy BACKWARD, which is why it is
+    configuration rather than a constant and why the UI prints it.
+    """
+    cfg = _configured()
+    return (os.environ.get("GROUNDWORK_REPO") or cfg.get("repo") or DEFAULT_REPO,
+            os.environ.get("GROUNDWORK_BRANCH") or cfg.get("branch") or DEFAULT_BRANCH)
 
 
 def _get(url: str, timeout: int = 30) -> bytes:

@@ -508,7 +508,7 @@
             compare. Installing will record one and bring it to the latest.</div>`
         : '<div class="note">Up to date.</div>'}`;
     apply.hidden = false;
-    apply.textContent = d.behind || d.unknown_local ? 'Download and install' : 'Reinstall latest';
+    apply.textContent = d.behind || d.unknown_local ? 'See what would change' : 'Check for changes';
   }
 
   async function checkUpdate() {
@@ -526,29 +526,60 @@
   function wireUpdates() {
     const check = el('update-check'), apply = el('update-apply'), msg = el('update-msg');
     if (!check) return;
-    check.addEventListener('click', checkUpdate);
+    let staged = null;          // the dry run the user has seen
+
+    check.addEventListener('click', () => { staged = null; checkUpdate(); });
+
     apply.addEventListener('click', async () => {
       apply.disabled = check.disabled = true;
-      msg.textContent = 'Downloading…';
-      let r, d;
       try {
-        r = await fetch('/api/update/apply', { method: 'POST' });
-        d = await r.json();
-      } catch (e) { msg.textContent = 'Update failed.'; apply.disabled = check.disabled = false; return; }
-      apply.disabled = check.disabled = false;
-      if (!d.ok) { msg.textContent = d.error || 'Update failed.'; return; }
-      if (!d.updated) { msg.textContent = 'Already up to date.'; return; }
-      msg.textContent = `${d.changed_count} file(s) updated.`;
-      // The running process is still the old code. Saying so plainly beats a
-      // half-updated app that looks fine and behaves oddly.
-      el('update-body').innerHTML = `
-        <div class="note warn"><b>Update installed — restart Groundwork to finish.</b>
-          The running copy is still the previous version until you do.</div>
-        <table class="mini"><tbody>
-          <tr><td class="dim" style="width:100px">Files updated</td><td>${fmt(d.changed_count)}</td></tr>
-          ${d.merged.length ? `<tr><td class="dim">Config merged</td><td>your settings kept</td></tr>` : ''}
-          ${d.backup ? `<tr><td class="dim">Backup</td><td class="mono">${esc(d.backup.split(/[\\/]/).pop())}</td></tr>` : ''}
-        </tbody></table>`;
+        // Two clicks on purpose. The first says what would change; the second
+        // does it. This is a folder somebody downloaded, with no uninstaller —
+        // "28 files will be replaced" is worth seeing before it happens, and it
+        // is the only thing that catches an update pointed at the wrong branch
+        // about to roll the copy backward.
+        if (!staged) {
+          msg.textContent = 'Checking what would change…';
+          const r = await fetch('/api/update/apply?dry_run=true', { method: 'POST' });
+          const d = await r.json();
+          if (!d.ok) { msg.textContent = d.error || 'Update failed.'; return; }
+          if (!d.updated) { msg.textContent = 'Nothing to change — already up to date.'; return; }
+          staged = d;
+          msg.textContent = '';
+          el('update-body').insertAdjacentHTML('beforeend', `
+            <div class="note warn"><b>${fmt(d.changed_count)} file(s) would be replaced</b>
+              from <span class="mono">${esc(d.repo)} · ${esc(d.branch)}</span>.
+              ${d.merged.length ? 'Your config.json will be merged, not overwritten. ' : ''}
+              Your data, environment and logs are untouched, and replaced files are backed
+              up first.
+              <div class="snip">${d.changed.slice(0, 12).map(esc).join('<br>')}
+                ${d.changed_count > 12 ? `<br>…and ${fmt(d.changed_count - 12)} more` : ''}</div>
+            </div>`);
+          apply.textContent = `Install ${fmt(d.changed_count)} file(s)`;
+          return;
+        }
+
+        msg.textContent = 'Downloading…';
+        const r = await fetch('/api/update/apply', { method: 'POST' });
+        const d = await r.json();
+        if (!d.ok) { msg.textContent = d.error || 'Update failed.'; return; }
+        staged = null;
+        apply.hidden = true;
+        // The running process is still the old code. Saying so plainly beats a
+        // half-updated app that looks fine and behaves oddly.
+        el('update-body').innerHTML = `
+          <div class="note warn"><b>Update installed — restart Groundwork to finish.</b>
+            The running copy is still the previous version until you do.</div>
+          <table class="mini"><tbody>
+            <tr><td class="dim" style="width:110px">Files updated</td><td>${fmt(d.changed_count)}</td></tr>
+            ${d.merged.length ? '<tr><td class="dim">Config</td><td>merged — your settings kept</td></tr>' : ''}
+            ${d.backup ? `<tr><td class="dim">Backup</td><td class="mono">.backup/${esc(d.backup.split(/[\\/]/).pop())}</td></tr>` : ''}
+          </tbody></table>`;
+      } catch (e) {
+        msg.textContent = 'Could not reach the update service.';
+      } finally {
+        apply.disabled = check.disabled = false;
+      }
     });
     checkUpdate();
   }

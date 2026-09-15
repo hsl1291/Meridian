@@ -106,5 +106,10 @@
       "zoning_layer": "",
       "_note": "No zoning layer wired yet, so capacity reports unresolved rather than guessing."
     }
+  },
+  "update": {
+    "repo": "hsl1291/Meridian",
+    "branch": "main",
+    "_note": "Where the Check for updates button pulls from. Set `branch` to whatever you actually ship from -- pointing it at a branch you no longer merge to would quietly roll an installed copy BACKWARD. The app shows the repo and branch beside the button so this is never a surprise. Overridable per machine with the GROUNDWORK_REPO / GROUNDWORK_BRANCH environment variables."
   }
 }
