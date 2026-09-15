@@ -64,6 +64,66 @@ def check_python():
             f" installer.\n")
 
 
+def run(cmd, **kw):
+    """Run a command and capture everything, so a failure can be REPORTED rather
+    than guessed at. The first version of this script told people their pip
+    failure was a network problem when it was a missing ensurepip."""
+    return subprocess.run(cmd, capture_output=True, text=True, **kw)
+
+
+def has_pip(py: Path) -> bool:
+    return run([str(py), "-m", "pip", "--version"]).returncode == 0
+
+
+def ensure_pip(py: Path):
+    """Get pip into the environment, whatever it takes.
+
+    `python -m venv` is supposed to do this, and on a lot of Windows installs it
+    quietly does not -- the Microsoft Store build and several corporate images
+    ship without a working `ensurepip`, so the venv is created, python.exe is
+    there, and pip simply is not. Three escalating attempts, and the real error
+    if all three fail.
+    """
+    if has_pip(py):
+        return
+
+    say("the new environment has no pip — repairing")
+    r = run([str(py), "-m", "ensurepip", "--upgrade", "--default-pip"])
+    if has_pip(py):
+        return
+
+    # Last resort: the official bootstrap. urllib, not PowerShell, not curl --
+    # this has to work on a bare Windows box.
+    say("fetching get-pip.py")
+    try:
+        with urllib.request.urlopen("https://bootstrap.pypa.io/get-pip.py", timeout=60) as resp:
+            script = resp.read()
+    except (urllib.error.URLError, OSError) as e:
+        raise SystemExit(
+            f"\n Could not install pip into {VENV}.\n"
+            f"\n ensurepip said:\n   {(r.stderr or r.stdout or 'nothing').strip()[:400]}\n"
+            f"\n and downloading get-pip.py failed: {e}\n"
+            f"\n This machine's Python cannot build a working environment. The usual\n"
+            f" cause is the Microsoft Store version of Python. Install it from\n"
+            f" https://www.python.org/downloads/ instead, tick 'Add python.exe to\n"
+            f" PATH', then delete the .venv folder and run this again.\n")
+
+    tmp = VENV / "get-pip.py"
+    tmp.write_bytes(script)
+    g = run([str(py), str(tmp)])
+    tmp.unlink(missing_ok=True)
+    if has_pip(py):
+        return
+
+    raise SystemExit(
+        f"\n pip could not be installed into {VENV}.\n"
+        f"\n ensurepip said:\n   {(r.stderr or r.stdout or 'nothing').strip()[:300]}\n"
+        f"\n get-pip said:\n   {(g.stderr or g.stdout or 'nothing').strip()[:300]}\n"
+        f"\n Delete the .venv folder and try again. If it keeps happening, the\n"
+        f" Python running this is probably the Microsoft Store build — install\n"
+        f" from https://www.python.org/downloads/ instead.\n")
+
+
 def ensure_venv(force=False):
     """A virtual environment inside the app folder.
 
@@ -73,17 +133,22 @@ def ensure_venv(force=False):
     py = venv_python()
     if force and VENV.exists():
         say("removing the old environment")
-        shutil.rmtree(VENV)
+        shutil.rmtree(VENV, ignore_errors=True)
         py = venv_python()
-    if py.exists():
-        return py
-    say("creating a Python environment in .venv (once, about a minute)")
-    venv.EnvBuilder(with_pip=True, clear=False).create(VENV)
+
     if not py.exists():
-        raise SystemExit(
-            f"\n Could not create a virtual environment at {VENV}.\n"
-            f" On Debian or Ubuntu this usually means python3-venv is missing:\n"
-            f"   sudo apt install python3-venv\n")
+        say("creating a Python environment in .venv (once, about a minute)")
+        # Through the interpreter rather than venv.EnvBuilder: a failure here
+        # returns a message worth printing instead of a traceback.
+        r = run([sys.executable, "-m", "venv", str(VENV)])
+        if not py.exists():
+            raise SystemExit(
+                f"\n Could not create a virtual environment at {VENV}.\n"
+                f"\n python -m venv said:\n   {(r.stderr or r.stdout or 'nothing').strip()[:400]}\n"
+                f"\n On Debian or Ubuntu this usually means python3-venv is missing:\n"
+                f"   sudo apt install python3-venv\n")
+
+    ensure_pip(py)
     return py
 
 
@@ -99,22 +164,55 @@ def ensure_deps(py: Path, force=False):
     if not force and stamp().exists() and stamp().read_text(encoding="utf-8") == want:
         return
     say("installing dependencies")
-    r = subprocess.run([str(py), "-m", "pip", "install", "--quiet",
-                        "--disable-pip-version-check", "-r", str(req)])
+    r = run([str(py), "-m", "pip", "install", "--disable-pip-version-check",
+             "-r", str(req)])
     if r.returncode != 0:
+        # Print what pip actually said. Guessing at the cause is how the first
+        # version of this reported a missing ensurepip as a network outage.
         raise SystemExit(
-            "\n Dependencies failed to install. The usual cause is no internet\n"
-            " connection, or a proxy that pip cannot see through. Re-run with\n"
-            " --reinstall once that is sorted.\n")
+            "\n Dependencies failed to install. pip said:\n\n"
+            + "\n".join("   " + ln for ln in
+                        (r.stderr or r.stdout or "nothing").strip().splitlines()[-12:])
+            + "\n\n Then re-run. --reinstall rebuilds .venv from scratch.\n")
     stamp().write_text(want, encoding="utf-8")
 
 
-def already_running() -> bool:
+def whoever_is_on_the_port(port: int) -> dict | None:
+    """Identify what is answering, not just that something is.
+
+    An older install auto-starting at logon holds 8012. Treating that as "we are
+    already running" and opening a browser onto it means the folder you just
+    downloaded looks broken while a different copy shows you stale code -- which
+    is exactly what happens with a stale basemap and no way to tell.
+    """
+    base = f"http://127.0.0.1:{port}"
     try:
-        with urllib.request.urlopen(URL, timeout=1.5):
-            return True
+        with urllib.request.urlopen(f"{base}/api/instance", timeout=2) as r:
+            import json
+            d = json.loads(r.read())
+            return {"root": d.get("root"), "pid": d.get("pid"), "known": True}
+    except urllib.error.HTTPError:
+        # Something is there and serving, but too old to have /api/instance.
+        return {"root": None, "pid": None, "known": False}
+    except (urllib.error.URLError, OSError, ValueError):
+        pass
+    try:
+        with urllib.request.urlopen(base, timeout=2):
+            return {"root": None, "pid": None, "known": False}
     except (urllib.error.URLError, OSError):
-        return False
+        return None
+
+
+def free_port(start_at: int, tries: int = 12) -> int | None:
+    import socket
+    for port in range(start_at, start_at + tries):
+        with socket.socket() as sock:
+            try:
+                sock.bind(("127.0.0.1", port))
+                return port
+            except OSError:
+                continue
+    return None
 
 
 def fetch_data(py: Path):
@@ -174,19 +272,38 @@ def do_update(check_only=False) -> bool:
     return True
 
 
-def serve(py: Path, open_browser=True):
-    if already_running():
-        say(f"already running at {URL}")
-        if open_browser:
-            import webbrowser
-            webbrowser.open(URL)
-        return 0
+def serve(py: Path, open_browser=True, port=PORT):
+    import webbrowser
 
-    say(f"starting on {URL}")
+    holder = whoever_is_on_the_port(port)
+    if holder is not None:
+        same = holder["root"] and Path(holder["root"]).resolve() == ROOT
+        if same:
+            say(f"this copy is already running at http://127.0.0.1:{port}")
+            if open_browser:
+                webbrowser.open(f"http://127.0.0.1:{port}")
+            return 0
+
+        # Something else has the port. Say so plainly and move aside rather than
+        # opening a browser onto another install.
+        who = holder["root"] or "an older version, which has no way to identify itself"
+        say(f"port {port} is taken by {who}", "!")
+        alt = free_port(port + 1)
+        if alt is None:
+            raise SystemExit(
+                f"\n Port {port} is in use by another copy of Groundwork and no nearby\n"
+                f" port is free. Close the other one -- if it starts at logon, run\n"
+                f"   .venv\\Scripts\\python.exe install.py --uninstall\n"
+                f" in that folder -- then run this again.\n")
+        say(f"starting this copy on {alt} instead")
+        port = alt
+
+    url = f"http://127.0.0.1:{port}"
+    say(f"starting on {url}")
     env = dict(os.environ, PYTHONUNBUFFERED="1")
     proc = subprocess.Popen(
         [str(py), "-m", "uvicorn", "backend.app:app",
-         "--host", "127.0.0.1", "--port", str(PORT)],
+         "--host", "127.0.0.1", "--port", str(port)],
         cwd=str(ROOT), env=env)
 
     if open_browser:
@@ -195,13 +312,13 @@ def serve(py: Path, open_browser=True):
         for _ in range(60):
             if proc.poll() is not None:
                 break
-            if already_running():
-                import webbrowser
-                webbrowser.open(URL)
+            h = whoever_is_on_the_port(port)
+            if h and (not h["root"] or Path(h["root"]).resolve() == ROOT):
+                webbrowser.open(url)
                 break
             time.sleep(0.5)
 
-    print(f"\n    Groundwork is running:  {URL}")
+    print(f"\n    Groundwork is running:  {url}")
     print( "    Press Ctrl-C here to stop it.\n")
     try:
         return proc.wait()
@@ -227,6 +344,8 @@ def main():
     ap.add_argument("--reinstall", action="store_true",
                     help="rebuild .venv from scratch")
     ap.add_argument("--no-browser", action="store_true")
+    ap.add_argument("--port", type=int, default=PORT,
+                    help=f"serve on this port instead of {PORT}")
     ap.add_argument("--setup-only", action="store_true",
                     help="install everything and exit without starting")
     args = ap.parse_args()
@@ -249,7 +368,7 @@ def main():
     if args.setup_only:
         say("ready. Run this again without --setup-only to start.")
         return 0
-    return serve(py, open_browser=not args.no_browser)
+    return serve(py, open_browser=not args.no_browser, port=args.port)
 
 
 if __name__ == "__main__":

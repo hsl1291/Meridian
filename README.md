@@ -254,11 +254,18 @@ python.exe to PATH* when you install it; if it is missing the launcher says so
 and links the download rather than failing with a traceback.
 
 The first run creates `.venv` inside the folder and installs the dependencies
-into it — about a minute, once. Every run after that starts straight away and
+into it — about a minute, once. If Windows builds that environment without pip
+(the Microsoft Store build of Python does this, as do some corporate images) the
+launcher repairs it rather than failing. Every run after that starts straight away and
 opens <http://127.0.0.1:8012>. Nothing is installed outside the folder, no paths
 need editing, and deleting the folder removes the app completely.
 
+If port 8012 is already taken — an older install starting at logon is the usual
+reason — the launcher says which folder is holding it and starts this copy on the
+next free port instead of opening a browser onto the other one.
+
 ```
+start.bat --port 8020      serve somewhere else
 start.bat --fetch          also download the public map and market data
 start.bat --update         update from GitHub first, then start
 start.bat --check-update   say whether an update is available, then stop

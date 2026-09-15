@@ -23,7 +23,7 @@ import sqlite3
 import time
 from pathlib import Path
 
-from .shared_paths import shared_layers
+from .shared_paths import APP_ROOT, shared_layers
 
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
@@ -384,6 +384,19 @@ app.include_router(site_screen_router)
 # Download the current branch from GitHub and swap the application files. No git
 # needed, so a folder that came from "Download ZIP" updates the same way a clone
 # does, and no PowerShell anywhere -- this is urllib and zipfile.
+
+@app.get("/api/instance")
+def instance():
+    """Which copy of Groundwork is answering on this port.
+
+    start.py checks this before deciding a port is "already running": an older
+    install auto-starting at logon holds 8012, and without this the launcher
+    happily opens a browser onto that one while the folder you just updated sits
+    there doing nothing. That is an hour of confusion, and it is one route.
+    """
+    import os as _o
+    return {"app": "Groundwork", "root": str(APP_ROOT), "pid": _o.getpid()}
+
 
 @app.get("/api/update/check")
 def update_check():
