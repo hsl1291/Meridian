@@ -44,6 +44,23 @@ for _s in (sys.stdout, sys.stderr):
 CFG = json.loads((ROOT / "backend" / "prospect" / "config.json").read_text(encoding="utf-8"))
 THIS_YEAR = datetime.now().year
 
+
+def county_config(name: str | None = None) -> dict:
+    """The active county's settings. `county` in config.json picks it; everything
+    that used to be a Miami-Dade constant lives under config.counties."""
+    key = (name or CFG.get("county") or "DADE").upper()
+    counties = CFG.get("counties") or {}
+    if key not in counties:
+        # Accept the display name too: config's `county` is "Miami-Dade".
+        key = next((k for k, v in counties.items()
+                    if isinstance(v, dict) and v.get("dbpr_county", "").upper() == key), key)
+    if key not in counties:
+        raise SystemExit(
+            f"county {key!r} is not in config.counties. Add it there — the NAL and "
+            f"DBPR files are statewide, so a new county is an entry plus a zoning "
+            f"layer, not new code.")
+    return counties[key]
+
 # Owners that are the association itself rather than an acquirer.
 ASSOC_RE = re.compile(r"\b(ASSOC|ASSN|ASSOCIATION|HOA|HOMEOWNERS?|CONDOMINIUM)\b")
 
@@ -51,7 +68,7 @@ ASSOC_RE = re.compile(r"\b(ASSOC|ASSN|ASSOCIATION|HOA|HOMEOWNERS?|CONDOMINIUM)\b
 # tables in main() rather than trusted -- a silent drift here is the "table has N
 # columns but M values were supplied" that only shows up mid-load.
 GROUP_COLS = 36
-TARGET_COLS = 49
+TARGET_COLS = 53
 SNAPSHOT_COLS = 15
 
 
@@ -82,11 +99,15 @@ def legal_names(con):
 
 def site_coords(con):
     """group_key -> (lon, lat), reprojected from the site's land parcels.
-    The county publishes X/Y in State Plane Florida East (EPSG:2236, feet);
-    the map wants WGS84. Averaged across the site's parcels so a sprawling
-    complex lands in its middle rather than on one corner lot."""
+    Counties publish X/Y in their own State Plane zone (feet); the map wants
+    WGS84. Averaged across the site's parcels so a sprawling complex lands in its
+    middle rather than on one corner lot. The EPSG and the sanity bbox come from
+    config.counties, because they are the two things that were hardcoded to
+    Miami-Dade and would silently put another county's buildings in the sea."""
     from pyproj import Transformer
-    tf = Transformer.from_crs(2236, 4326, always_xy=True)
+    county = county_config()
+    tf = Transformer.from_crs(county["state_plane"], 4326, always_xy=True)
+    x0, y0, x1, y1 = county["bbox"]
     acc = defaultdict(lambda: [0.0, 0.0, 0])
     q = ("SELECT subdivision AS k, x_coord, y_coord FROM pa_parcel "
          "WHERE x_coord IS NOT NULL AND y_coord IS NOT NULL "
@@ -101,7 +122,7 @@ def site_coords(con):
         if n:
             lon, lat = tf.transform(sx / n, sy / n)
             # Guard against bad source coords landing outside the county.
-            if -81.0 < lon < -80.0 and 25.0 < lat < 26.1:
+            if x0 < lon < x1 and y0 < lat < y1:
                 out[k] = (round(lon, 6), round(lat, 6))
     return out
 
@@ -317,6 +338,33 @@ def write_snapshot(con, roll_year, roll_type):
     return len(rows)
 
 
+def recert_map(con):
+    """group_key -> (status, due_date, unsafe_case). Worst row wins where a
+    building has several: an open case on one folio of a complex is an open case
+    for the building, and averaging it away would be the wrong answer."""
+    out = {}
+    for r in con.execute(
+            "SELECT group_key, status, due_date, unsafe_case FROM building_recert "
+            "WHERE group_key IS NOT NULL ORDER BY unsafe_case DESC"):
+        out.setdefault(r["group_key"], (r["status"], r["due_date"], r["unsafe_case"]))
+    return out
+
+
+def distress(age, recert):
+    """0-100. Structural distress is the post-Surfside motivation to sell, and it
+    is a FACT where recert data exists -- so where it does not, this returns None
+    rather than falling back to age, which is the guess it replaces."""
+    if recert is None:
+        return None
+    _status, _due, unsafe = recert
+    base = 55.0 if unsafe else 10.0
+    # Age still matters inside the distressed set: an open case on a 60-year-old
+    # building is a bigger assessment than on a 30-year-old one.
+    if age:
+        base += min(45.0, max(0.0, (age - 30) * 1.5))
+    return round(min(100.0, base), 1)
+
+
 def restore_declarations(con):
     """Put reviewed declaration findings back after the rebuild.
 
@@ -371,6 +419,9 @@ def log_curve(value, lo, hi):
 def score_all(con, matches, prior=None):
     print("pass 3: scoring ...")
     prior = prior or {}
+    recerts = recert_map(con)
+    if recerts:
+        print(f"  recertification status for {len(recerts):,} building(s)")
     con.execute("DELETE FROM target")
     w = CFG["score_weights"]
     ac, sc, cc = CFG["age_curve"], CFG["scale_curve"], CFG["concentration_curve"]
@@ -425,6 +476,9 @@ def score_all(con, matches, prior=None):
             # whole table is rebuilt, then restored by restore_declarations()
             # below from declaration_doc, which a rebuild never touches.
             None, None, None, None,
+            *( (lambda rc: (rc[0] if rc else None, rc[1] if rc else None,
+                            rc[2] if rc else None, distress(age, rc))
+                )(recerts.get(key)) ),
         ))
 
     con.executemany(f"INSERT INTO target VALUES ({','.join('?' * TARGET_COLS)})", rows)

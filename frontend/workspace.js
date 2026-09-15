@@ -90,6 +90,7 @@
       min_conc: el('t-conc').value || 0,
       milestone_only: el('t-milestone').checked ? 'true' : '',
       assembling_only: el('t-assembling').checked ? 'true' : '',
+      unsafe_only: el('t-unsafe').checked ? 'true' : '',
     };
   }
   function tParams(extra) {
@@ -113,7 +114,10 @@
     tTotal = r.total;
     body.innerHTML = r.rows.map((t) => {
       const flags = [];
-      if (t.milestone_due) flags.push('<span class="tag warm">milestone</span>');
+      // An open case is a fact from the county; `milestone` is an age guess. Show
+      // the fact where there is one and do not show both.
+      if (t.unsafe_case_open) flags.push('<span class="tag hot">unsafe case</span>');
+      else if (t.milestone_due) flags.push('<span class="tag warm">milestone</span>');
       if ((t.top_owner_pct || 0) >= 50) flags.push('<span class="tag hot">bulk owner</span>');
       if (t.stage2_verified) flags.push('<span class="tag cool">verified</span>');
       // Movement, where there is a prior vintage to compare against. No tag at
@@ -218,7 +222,7 @@
     for (const id of ['t-q', 't-units', 't-age', 't-conc']) {
       el(id).addEventListener('input', () => tRefresh(true));
     }
-    for (const id of ['t-city', 't-sort', 't-milestone', 't-assembling']) {
+    for (const id of ['t-city', 't-sort', 't-milestone', 't-assembling', 't-unsafe']) {
       el(id).addEventListener('change', () => tRefresh(true));
     }
     for (const th of document.querySelectorAll('th[data-tsort]')) {
@@ -311,7 +315,10 @@
       <div class="note">Score = ${Math.round((t.score_age ?? 0))} age · ${Math.round((t.score_scale ?? 0))} scale
         · ${Math.round((t.score_concentration ?? 0))} concentration · ${Math.round((t.score_absentee ?? 0))} absentee.
         DBPR match: <b>${esc(t.match_method)}</b>${t.match_confidence ? ` (confidence ${t.match_confidence})` : ''}.
-        ${t.milestone_due ? '<br><b>Milestone inspection window is open</b> under FS 553.899 — verify against the current statute.' : ''}</div>
+        ${t.recert_status ? `<br><b>Recertification:</b> ${esc(t.recert_status)}${t.recert_due_date
+            ? ' · due ' + esc(t.recert_due_date) : ''}${t.unsafe_case_open
+            ? ' — <b>open case</b>, which is the post-Surfside reason owners sell.' : '.'}`
+          : t.milestone_due ? '<br><b>Milestone inspection window is open</b> under FS 553.899 — an age estimate, not the county\'s record. Run ingest_recert.py for the published status.' : ''}</div>
 
       <h3>Sales comparables</h3>
       <div id="t-comps"><p class="msg">Loading comps…</p></div>

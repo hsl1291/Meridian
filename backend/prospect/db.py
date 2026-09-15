@@ -268,10 +268,38 @@ CREATE TABLE IF NOT EXISTS target (
     rofr             INTEGER,
     leasehold        INTEGER,
     age_restricted   INTEGER,
-    declaration_docs INTEGER
+    declaration_docs INTEGER,
+    -- Recertification, joined from building_recert. Appended, like every column
+    -- before them, because build_targets inserts positionally.
+    recert_status    TEXT,
+    recert_due_date  TEXT,
+    unsafe_case_open INTEGER,
+    score_distress   REAL
 );
 CREATE INDEX IF NOT EXISTS ix_target_score ON target(score DESC);
 CREATE INDEX IF NOT EXISTS ix_target_assembly ON target(conc_delta DESC);
+
+-- ── milestone / recertification ───────────────────────────────────────────
+-- Post-Surfside, the building that terminates is not the one that is merely old.
+-- It is the one facing a milestone inspection under FS 553.899 plus a structural
+-- integrity reserve study under 718.112(2)(g), staring at a per-unit special
+-- assessment its owners cannot fund. That building has motivated sellers; an
+-- identically aged one that already passed recertification does not.
+--
+-- `milestone_due` was age_years >= 30 -- a guess at a fact Miami-Dade publishes.
+-- Keyed on folio and mapped to a building by the 9-digit prefix, like everything
+-- else here. Its own table so a rebuild cannot erase it.
+CREATE TABLE IF NOT EXISTS building_recert (
+    folio        TEXT PRIMARY KEY,
+    group_key    TEXT,
+    status       TEXT,      -- as published; not normalised into a guess
+    due_date     TEXT,
+    unsafe_case  INTEGER,
+    address      TEXT,
+    source       TEXT,      -- the file it came from
+    ingested     TEXT
+);
+CREATE INDEX IF NOT EXISTS ix_recert_group ON building_recert(group_key);
 
 -- ── deal state ────────────────────────────────────────────────────────────
 -- stage2_verified was the only workflow field on a target, which made the table
@@ -562,6 +590,10 @@ _ADDED_COLUMNS = [
     ("main", "target", "leasehold", "INTEGER"),
     ("main", "target", "age_restricted", "INTEGER"),
     ("main", "target", "declaration_docs", "INTEGER"),
+    ("main", "target", "recert_status", "TEXT"),
+    ("main", "target", "recert_due_date", "TEXT"),
+    ("main", "target", "unsafe_case_open", "INTEGER"),
+    ("main", "target", "score_distress", "REAL"),
 ]
 
 

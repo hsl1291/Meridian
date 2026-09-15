@@ -85,6 +85,7 @@ SORTS = {
     # is "no comparison available", not "no change" -- sort below real movement
     # instead of above it.
     "assembling": "conc_delta DESC NULLS LAST",
+    "distress": "score_distress DESC NULLS LAST",
     "consolidating": "owners_delta ASC NULLS LAST",
 }
 
@@ -92,7 +93,8 @@ SORTS = {
 def _target_filter(q: str, city: str, min_units: int, max_units: int,
                    min_age: int, min_score: float, min_conc: float,
                    milestone_only: bool, matched_only: bool,
-                   unverified_only: bool, assembling_only: bool = False) -> tuple[str, list]:
+                   unverified_only: bool, assembling_only: bool = False,
+                   unsafe_only: bool = False) -> tuple[str, list]:
     where, params = ["units_nal BETWEEN ? AND ?"], [min_units, max_units]
     if q:
         where.append("(condo_name LIKE ? OR addr_primary LIKE ? OR top_owner LIKE ?)")
@@ -117,6 +119,8 @@ def _target_filter(q: str, city: str, min_units: int, max_units: int,
         where.append("stage2_verified = 0")
     if assembling_only:
         where.append("assembly_flag = 1")
+    if unsafe_only:
+        where.append("unsafe_case_open = 1")
     return " AND ".join(where), params
 
 
@@ -127,11 +131,12 @@ def targets(
     min_age: int = 0, min_score: float = 0, min_conc: float = 0,
     milestone_only: bool = False, matched_only: bool = False,
     unverified_only: bool = False, assembling_only: bool = False,
-    sort: str = "score",
+    unsafe_only: bool = False, sort: str = "score",
 ):
     clause, params = _target_filter(q, city, min_units, max_units, min_age,
                                     min_score, min_conc, milestone_only,
-                                    matched_only, unverified_only, assembling_only)
+                                    matched_only, unverified_only, assembling_only,
+                                    unsafe_only)
     order = SORTS.get(sort, SORTS["score"])
     con = db()
     try:
@@ -151,6 +156,7 @@ def targets_geojson(
     min_age: int = 0, min_score: float = 0, min_conc: float = 0,
     milestone_only: bool = False, matched_only: bool = False,
     unverified_only: bool = False, assembling_only: bool = False,
+    unsafe_only: bool = False,
 ):
     """Every target matching the current filters, as map points.
 
@@ -160,13 +166,14 @@ def targets_geojson(
     """
     clause, params = _target_filter(q, city, min_units, max_units, min_age,
                                     min_score, min_conc, milestone_only,
-                                    matched_only, unverified_only, assembling_only)
+                                    matched_only, unverified_only, assembling_only,
+                                    unsafe_only)
     con = db()
     try:
         rows = con.execute(
             "SELECT group_key, condo_name, addr_primary, city, units_nal, "
             "age_years, act_yr_blt, top_owner_pct, jv_per_unit, score, "
-            "milestone_due, stage2_verified, lon, lat "
+            "milestone_due, stage2_verified, unsafe_case_open, score_distress, lon, lat "
             f"FROM target WHERE {clause} AND lon IS NOT NULL "
             "ORDER BY score DESC LIMIT ?", params + [cap]).fetchall()
     finally:

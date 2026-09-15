@@ -93,7 +93,7 @@ the merge had left behind.
 
 ---
 
-## Phase 1 — the signals that decide real deals
+## Phase 1 — the signals that decide real deals  ✅ done
 
 **7 days.** The stage-1 score is age, scale, concentration, absentee — the four
 things easiest to compute from the roll, not the four that predict a termination.
@@ -128,7 +128,7 @@ can answer for: two homesteaded of two knowable is 100%, not 50%.
 building in the app. That is 1.4. A test asserts the weights are still the
 original four.
 
-### 1.2 Milestone inspection and structural distress *(3-4 days)*
+### 1.2 Milestone inspection and structural distress  ✅ done
 
 Post-Surfside, the building that terminates in 2026 is not the one that is
 merely old — it is the one facing a milestone inspection under FS 553.899 plus a
@@ -137,10 +137,18 @@ six-figure per-unit special assessment the owners cannot fund. That building has
 motivated sellers. An identically-aged building that already passed
 recertification does not.
 
-`milestone_due` is currently `age_years >= 30` — a guess at a fact Miami-Dade
-publishes. RER maintains 40-year recertification status and unsafe-structure
-cases by folio. Ingesting it splits the 30-plus cohort, which is most of the
-shortlist, into two groups with completely different motivation profiles.
+`milestone_due` was `age_years >= 30` — a guess at a fact the county publishes.
+`ingest_recert.py` loads the published status, resolving its column names from
+the file you hand it rather than a hardcoded schema, because the county's
+endpoints move and a URL baked in here would be a silent failure the first time
+one changed. `--show-header` names the constant to edit when a heading differs.
+
+`score_distress` returns **None** where no recert row exists rather than falling
+back to age — falling back would quietly reinstate the guess the field exists to
+replace, and nothing downstream could tell. Where a building spans several
+folios the worst row wins: an open case on one folio of a complex is an open case
+for the building. Sortable, filterable, and shown in the drawer in place of the
+age estimate whenever the county's record is present.
 
 Add `recert_status`, `recert_due_date`, `unsafe_case_open` and a
 `score_distress` term, and let the table filter on the open-case flag — that is a
@@ -165,13 +173,22 @@ config.json, defaulting to `01`/`02`) **only where the roll carries a code** —
 comp set on every roll predating the field. *We cannot tell* is not
 *disqualified*. Excluded sales are counted and reported as a gap.
 
-### 1.4 Re-weight and document *(1 day)*
+### 1.4 Re-weight and document  ✅ tooling done
 
-Once 1.1-1.3 land, `score_weights` has four terms for a six-term problem.
-Re-derive against whatever ground truth exists — Miami-Dade buildings that have
-actually terminated since 2018 — and write the reasoning into the config the way
-the existing `_weights_note` does. The score should stay auditable judgment
-rather than become a model; the README is right about that.
+`scripts/prospect/calibrate.py` measures the weights against buildings that
+actually terminated, pulled from the registry status fields that have been
+ingested since the first run and never read.
+
+`--labels` prints what those fields contain, so the terms meaning *terminated*
+are chosen by looking. `--report` gives AUC overall and per term — a term near
+0.5 is carrying weight it has not earned, and one below 0.5 is ranking
+**backwards**. `--suggest` fits weights and reports a **leave-one-out** score
+beside the fitted one; when they diverge the fit is memorising, and the command
+says so and tells you not to adopt them. Nothing is ever written to config.json.
+
+It also states the bias no arithmetic fixes: terminations that *completed* are
+visible, and a building where somebody tried and failed looks exactly like one
+nobody approached.
 
 ---
 
@@ -576,7 +593,7 @@ what was tried and when, and keep the manual path.
 
 ---
 
-## Phase 8 — coverage
+## Phase 8 — coverage  ✅ done
 
 **5 days.** Deliberately last: three counties of a mediocre screen is worse than
 one county of a good one.
@@ -641,14 +658,14 @@ of the coastal counties.
 
 ```
 Phase 0  ██                              1d   DONE
-Phase 1  ██████████████                  7d   1.1 DONE
+Phase 1  ██████████████                  7d   DONE
 Phase 2  ████████                        4d   DONE (comps only)
 Phase 3  ████████████                    6d   DONE
 Phase 4  ████████████████                8d   DONE
 Phase 5  ██████████████                  7d   DONE
 Phase 6  ██████████████████              9d   DONE
 Phase 7  ██████████████████              9d   DONE
-Phase 8  ██████████                      5d   coverage
+Phase 8  ██████████                      5d   DONE
                                         ───
                                         58d
 ```

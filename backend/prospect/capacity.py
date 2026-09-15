@@ -1,7 +1,7 @@
 """Development capacity — what can actually be built on a site.
 
 The question that follows a termination target: you assemble the building, then
-what? This resolves a point against the Miami-Dade zoning layer, reads the
+what? This resolves a point against the county's zoning layer, reads the
 by-right envelope off it, and lays out unit yield under each Florida path that
 raises it.
 
@@ -9,9 +9,11 @@ Every number carries a `basis` string naming the field or statute it came from.
 Nothing here is a hand-entered constant except the statutory thresholds cited
 inline, because an entitlement number nobody can trace is worse than no number.
 
-Scope: Miami-Dade. The zoning layer is the county's municipal zoning coverage
-(35 municipalities). Outside it, `analyze` reports what it could not resolve
-rather than guessing.
+Scope: whichever county `config.county` names, using that county's
+`zoning_layer` from `config.counties`. It was hardcoded to Miami-Dade's layer,
+so every other county resolved against Miami's polygons. Where no layer is
+wired, `analyze` reports that rather than borrowing another jurisdiction's --
+a confident envelope for the wrong county is worse than no envelope.
 
 NOT a substitute for a zoning attorney. By-right envelopes here ignore
 setbacks, lot coverage interaction, parking, unit-mix rules and site geometry,
@@ -33,6 +35,23 @@ from threading import RLock
 LAYERS_DIR = shared_layers()
 
 SQFT_PER_ACRE = 43_560.0
+
+# The zoning layer this county publishes. Was hardcoded to Miami-Dade's, so
+# every other county resolved against Miami's polygons or nothing at all.
+_CFG = json.loads((Path(__file__).resolve().parent / "config.json").read_text(encoding="utf-8"))
+
+
+def _zoning_layer() -> str:
+    counties = _CFG.get("counties") or {}
+    key = (_CFG.get("county") or "").upper()
+    entry = counties.get(key) or next(
+        (v for v in counties.values()
+         if isinstance(v, dict) and v.get("dbpr_county", "").upper() == key), {})
+    return entry.get("zoning_layer") or ""
+
+
+ZONING_LAYER = _zoning_layer()
+COUNTY_NAME = _CFG.get("county") or "this county"
 
 # FS 166.04151(7) "Live Local Act". A qualifying project gets the highest
 # density allowed on ANY land in the jurisdiction where residential is allowed,
@@ -109,6 +128,12 @@ def _load(layer: str) -> list:
     with _lock:
         if layer in _cache:
             return _cache[layer]
+        if not layer:
+            # No zoning layer wired for this county. Reporting nothing found is
+            # correct; falling back to another county's polygons would produce a
+            # confident envelope for the wrong jurisdiction.
+            _cache[layer] = []
+            return []
         fp = LAYERS_DIR / f"{layer}.geojson"
         out: list = []
         if fp.exists():
@@ -181,7 +206,7 @@ def _jurisdiction_ceiling(munic: str) -> dict:
     with _lock:
         if _ceilings is None:
             acc: dict[str, float] = {}
-            for _, _, p in _load("mdc_zoning"):
+            for _, _, p in _load(ZONING_LAYER):
                 d = _num(p.get("DENSITY"))
                 if not d:
                     continue
@@ -209,7 +234,7 @@ def _height_within_uncached(lon: float, lat: float, miles: float) -> float | Non
     dlat = miles / 69.0
     dlon = miles / (69.0 * max(math.cos(math.radians(lat)), 0.1))
     best = 0.0
-    for (x0, y0, x1, y1), _, p in _load("mdc_zoning"):
+    for (x0, y0, x1, y1), _, p in _load(ZONING_LAYER):
         if x1 < lon - dlon or x0 > lon + dlon or y1 < lat - dlat or y0 > lat + dlat:
             continue
         h = _num(p.get("MAXHEIGHT"))
@@ -221,10 +246,13 @@ def _height_within_uncached(lon: float, lat: float, miles: float) -> float | Non
 # ── the analysis ────────────────────────────────────────────────────────────
 
 def analyze(lon: float, lat: float, lot_sf: float | None = None) -> dict:
-    z = _hit("mdc_zoning", lon, lat)
+    z = _hit(ZONING_LAYER, lon, lat)
     if not z:
         return {"resolved": False,
-                "reason": "no Miami-Dade zoning polygon covers this point",
+                "reason": (f"no {COUNTY_NAME} zoning polygon covers this point"
+                           if ZONING_LAYER else
+                           f"no zoning layer is wired for {COUNTY_NAME} — add one to "
+                           f"config.counties, or capacity cannot be resolved here"),
                 "lon": lon, "lat": lat}
 
     munic = z.get("MUNICNAME") or ""

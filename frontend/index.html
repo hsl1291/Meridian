@@ -285,10 +285,13 @@
         <label class="inl">Age ≥ <input type="number" id="t-age" value="30" min="0" step="5" /></label>
         <label class="inl">Top owner ≥ <input type="number" id="t-conc" value="0" min="0" max="100" step="5" />%</label>
         <label class="chk"><input type="checkbox" id="t-milestone" /> Milestone due</label>
+        <label class="chk"><input type="checkbox" id="t-unsafe" /> Open unsafe case
+          <span class="hint" title="An open or overdue recertification or unsafe-structure case, from the county's published data. This is the post-Surfside motivation to sell: a building facing a per-unit assessment its owners cannot fund. Needs ingest_recert.py to have been run.">?</span></label>
         <label class="chk"><input type="checkbox" id="t-assembling" /> Being assembled
           <span class="hint" title="Concentration up two points or more since the previous roll AND the owner count falling. Either alone is noise — one sale moves concentration, and owner counts drift with data cleanup — but together they mean somebody is buying the building. Needs two roll vintages.">?</span></label>
         <select id="t-sort">
           <option value="score">Sort: score</option>
+          <option value="distress">Sort: structural distress</option>
           <option value="assembling">Sort: concentration gained</option>
           <option value="consolidating">Sort: owners lost</option>
           <option value="concentration">Sort: largest owner</option>
@@ -574,6 +577,6 @@
 <script src="zoning3d.js?v=1"></script>
 <script src="charts.js?v=4"></script>
 <script src="app.js?v=78"></script>
-<script src="workspace.js?v=10"></script>
+<script src="workspace.js?v=11"></script>
 </body>
 </html>

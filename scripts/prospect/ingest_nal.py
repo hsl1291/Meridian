@@ -34,6 +34,7 @@ NAL_URL = (
     "Tax%20Roll%20Data%20Files/NAL/2026P/Dade%2023%20Preliminary%20NAL%202026.zip"
 )
 RAW = Path(__file__).resolve().parents[2] / "data" / "raw" / "dade_nal_2026p.zip"
+ROOT_CFG = Path(__file__).resolve().parents[2] / "backend" / "prospect" / "config.json"
 CONDO_UC = {"004"}          # FDOR use code for condominium
 BATCH = 20_000
 
@@ -180,11 +181,29 @@ INSERT = f"INSERT OR REPLACE INTO nal_condo_unit VALUES ({','.join('?' * COLS)})
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--county", default=None,
+                    help="county key from config.counties (default: config.county)")
     ap.add_argument("--refresh", action="store_true", help="re-download the zip")
     ap.add_argument("--show-header", action="store_true",
                     help="print the roll's column names and exit -- use this to "
                          "confirm HOMESTEAD_CANDIDATES against the roll you have")
     args = ap.parse_args()
+
+    global NAL_URL, RAW, COUNTY
+    if args.county:
+        import json as _json
+        cfg = _json.loads((ROOT_CFG).read_text(encoding="utf-8"))
+        entry = (cfg.get("counties") or {}).get(args.county.upper())
+        if not entry:
+            raise SystemExit(f"{args.county!r} is not in config.counties — the NAL is a "
+                             f"statewide file, so a new county is an entry there.")
+        if not entry.get("nal_url"):
+            raise SystemExit(f"{args.county} has no nal_url in config.counties yet. Find the "
+                             f"roll for your year on the FDOR data portal and put the URL there.")
+        NAL_URL = entry["nal_url"]
+        COUNTY = entry["fdor_county"].upper()
+        RAW = RAW.with_name(f"{args.county.lower().replace(' ', '_')}_nal.zip")
+        print(f"county: {COUNTY}  ->  {RAW.name}")
 
     download(force=args.refresh)
     if args.show_header:

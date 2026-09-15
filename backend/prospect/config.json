@@ -62,5 +62,49 @@
       "dead"
     ],
     "_note": "Deal state per building. `screened` is the implicit default for every row."
+  },
+  "counties": {
+    "_note": "Everything that was hardcoded to Miami-Dade. The FDOR NAL and the DBPR registry are STATEWIDE files with identical structure, so a new county is an entry here plus a zoning layer \u2014 not new code. state_plane is the EPSG the county publishes its X/Y in; bbox is a sanity gate that catches bad source coordinates landing in the sea.",
+    "DADE": {
+      "fdor_county": "Dade",
+      "dbpr_county": "Miami-Dade",
+      "nal_url": "https://floridarevenue.com/property/dataportal/Documents/PTO%20Data%20Portal/Tax%20Roll%20Data%20Files/NAL/2026P/Dade%2023%20Preliminary%20NAL%202026.zip",
+      "state_plane": 2236,
+      "bbox": [
+        -81.0,
+        25.0,
+        -80.0,
+        26.1
+      ],
+      "zoning_layer": "mdc_zoning"
+    },
+    "BROWARD": {
+      "fdor_county": "Broward",
+      "dbpr_county": "Broward",
+      "nal_url": "",
+      "state_plane": 2236,
+      "bbox": [
+        -80.95,
+        25.9,
+        -80.0,
+        26.5
+      ],
+      "zoning_layer": "bro_zoning_bmsd",
+      "_note": "nal_url is blank until the roll year is chosen; ingest_nal --county BROWARD says so."
+    },
+    "PALM BEACH": {
+      "fdor_county": "Palm Beach",
+      "dbpr_county": "Palm Beach",
+      "nal_url": "",
+      "state_plane": 2236,
+      "bbox": [
+        -80.9,
+        26.3,
+        -80.0,
+        27.0
+      ],
+      "zoning_layer": "",
+      "_note": "No zoning layer wired yet, so capacity reports unresolved rather than guessing."
+    }
   }
 }
