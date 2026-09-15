@@ -220,6 +220,140 @@ def test_zoning_overlay_route_runs_candidates_concurrently():
     asyncio.run(run())
 
 
+# ── the permit-heat fallback chain runs concurrently, not serially ──────────
+#
+# /api/permit-heat had the same shape of bug as zoning-overlay: it tried
+# candidate permit sources (Miami-Dade, then every harvested city within
+# 0.45 degrees of the viewport) one at a time in a for-loop, each fully
+# awaited before the next was even started. Unlike zoning it does not merge
+# every source -- it wants the first USABLE one, in priority order -- but nearby
+# metros can easily wire several city candidates for one viewport, and a
+# dead/slow source part-way down the list used to stall everything behind it:
+# worst case N x 14s of serial wall time for one pan. Fixed by firing every
+# candidate concurrently and picking the first-in-priority-order candidate
+# that actually resolved, not the first to finish.
+
+def test_fetch_permit_candidate_is_a_self_contained_coroutine():
+    async def run():
+        client, calls = _slow_client(0.01, {"features": [
+            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]},
+             "properties": {"SQFT": 50000}}]})
+        cand = {"url": "https://x", "src": "Test City", "cfg": {"sqft": "SQFT"}}
+        result = await appmod._fetch_permit_candidate(client, cand, "{}", False, 100)
+        assert result is not None
+        assert result["source"] == "Test City"
+        assert len(result["features"]) == 1
+        assert result["features"][0]["properties"]["w"] == 2.0  # 50000/25000
+    asyncio.run(run())
+
+
+def test_a_candidate_with_no_usable_features_returns_none():
+    """None (not an empty FeatureCollection) is the "keep falling through"
+    signal the caller relies on to try the next candidate in priority order."""
+    async def run():
+        client, _ = _slow_client(0.01, {"features": []})
+        cand = {"url": "https://x", "src": "Empty City", "cfg": {}}
+        assert await appmod._fetch_permit_candidate(client, cand, "{}", False, 100) is None
+    asyncio.run(run())
+
+
+def test_permit_candidates_resolve_concurrently_not_serially():
+    """Six candidates at 0.3s each: serial would take ~1.8s; concurrent should
+    take close to 0.3s."""
+    async def run():
+        client, calls = _slow_client(0.3, {"features": [
+            {"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]},
+             "properties": {}}]})
+        t0 = time.monotonic()
+        tasks = [asyncio.ensure_future(appmod._fetch_permit_candidate(
+            client, {"url": f"https://x{i}", "src": f"City {i}", "cfg": {}}, "{}", False, 100))
+            for i in range(6)]
+        await asyncio.wait(tasks, timeout=14.0)
+        elapsed = time.monotonic() - t0
+        assert elapsed < 1.0, f"took {elapsed:.2f}s — the fallback chain is serial again"
+        assert max(calls) - min(calls) < 0.3, "calls did not start concurrently"
+    asyncio.run(run())
+
+
+def test_priority_order_wins_even_when_a_lower_priority_source_finishes_first():
+    """The whole point of keeping priority order instead of a bare "first to
+    finish" race: a fast-but-lower-priority city source must not preempt a
+    slower higher-priority one (e.g. the county) that also has data."""
+    import httpx
+
+    async def run():
+        async def fake_get(url, params=None):
+            if "slow" in url:
+                await asyncio.sleep(0.2)
+            else:
+                await asyncio.sleep(0.02)
+            return _SlowResponse(0, {"features": [
+                {"type": "Feature", "geometry": {"type": "Point", "coordinates": [0, 0]},
+                 "properties": {}}]})
+
+        class C:
+            pass
+        c = C()
+        c.get = fake_get
+
+        candidates = [
+            {"url": "https://slow-but-first-priority", "src": "County", "cfg": {}},
+            {"url": "https://fast-but-second-priority", "src": "City", "cfg": {}},
+        ]
+        tasks = [asyncio.ensure_future(appmod._fetch_permit_candidate(c, cand, "{}", False, 100))
+                 for cand in candidates]
+        done, pending = await asyncio.wait(tasks, timeout=14.0)
+        for t in pending:
+            t.cancel()
+        winner = None
+        for t, cand in zip(tasks, candidates):
+            if t not in done:
+                continue
+            result = t.result()
+            if result is not None:
+                winner = result
+                break
+        assert winner is not None
+        assert winner["source"] == "County", "the faster, lower-priority source preempted the real winner"
+    asyncio.run(run())
+
+
+def test_permit_heat_route_runs_candidates_concurrently():
+    """End to end over the real ASGI app, the same style of check as the
+    zoning-overlay route test above."""
+    import httpx
+
+    async def run():
+        orig_get = httpx.AsyncClient.get
+
+        async def fake_get(self, url, params=None, **kw):
+            if isinstance(url, str) and url.startswith("https://x"):
+                await asyncio.sleep(0.25)
+                return _SlowResponse(0, {"features": []})
+            return await orig_get(self, url, params=params, **kw)
+
+        real_nearby = appmod._nearby_cities
+        appmod._nearby_cities = lambda *a, **kw: [
+            {"url": f"https://x{i}", "city": f"City{i}", "state": "FL", "lon": -80.1, "lat": 25.7}
+            for i in range(6)
+        ]
+        httpx.AsyncClient.get = fake_get
+        try:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+                t0 = time.monotonic()
+                r = await client.get("/api/permit-heat",
+                                     params={"bbox": "-80.2,25.7,-80.1,25.8"})
+                elapsed = time.monotonic() - t0
+        finally:
+            appmod._nearby_cities = real_nearby
+            httpx.AsyncClient.get = orig_get
+
+        assert r.status_code == 200
+        assert elapsed < 1.0, f"permit-heat took {elapsed:.2f}s for concurrent candidates"
+    asyncio.run(run())
+
+
 # ── declaration upload no longer blocks the event loop ──────────────────────
 
 def test_upload_declaration_offloads_extraction_to_a_thread():

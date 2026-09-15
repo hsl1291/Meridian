@@ -1463,6 +1463,7 @@ let popYears = null;       // e.g. [2012 … 2023]
 let popFC = null;          // last-fetched FeatureCollection (geometry + pop arrays)
 let popGrowthOn = false;
 let popSeq = 0;            // latest-pan-wins guard
+let popAbort = null;       // cancel a superseded in-flight fetch, not just ignore it
 
 function popYearIdx() {
   const a = document.getElementById('pop-year-a');
@@ -1499,6 +1500,7 @@ function recolorPop() {
 async function refreshPopGrowth() {
   const note = document.getElementById('pop-growth-note');
   if (map.getZoom() < 9) {
+    popAbort?.abort();
     popFC = null;
     map.getSource('pop_growth')?.setData({ type: 'FeatureCollection', features: [] });
     if (note) { note.textContent = 'Zoom in to load population by ZIP…'; note.hidden = false; }
@@ -1508,8 +1510,10 @@ async function refreshPopGrowth() {
   const bbox = `${b.getWest().toFixed(5)},${b.getSouth().toFixed(5)},${b.getEast().toFixed(5)},${b.getNorth().toFixed(5)}`;
   if (note) { note.textContent = 'Loading population by ZIP…'; note.hidden = false; }
   const seq = ++popSeq;
+  popAbort?.abort();               // cancel a superseded in-flight fetch
+  popAbort = new AbortController();
   try {
-    const gj = await fetchJSON(`/api/zcta-pop?bbox=${bbox}`, { timeoutMs: 30000 });
+    const gj = await fetchJSON(`/api/zcta-pop?bbox=${bbox}`, { timeoutMs: 30000, signal: popAbort.signal });
     if (seq !== popSeq || !popGrowthOn) return;   // a newer pan won, or layer toggled off
     if (gj.years && gj.years.length) {
       popYears = gj.years;
@@ -1523,7 +1527,8 @@ async function refreshPopGrowth() {
     if (!popFC.features.length && note) { note.textContent = gj.note || 'No ZIP data in view.'; note.hidden = false; return; }
     recolorPop();
   } catch (e) {
-    if (note) { note.textContent = 'Population layer unavailable here.'; note.hidden = false; }
+    if (e.name === 'AbortError') return;   // superseded — the new fetch owns the UI
+    if (seq === popSeq && note) { note.textContent = 'Population layer unavailable here.'; note.hidden = false; }
   }
 }
 
@@ -1584,6 +1589,7 @@ function wirePopGrowth() {
 const RENT_LAYERS = ['rents-fill', 'rents-line', 'rents-label'];
 const RENT_RAMP = ['#0f766e', '#14b8a6', '#7dd3fc', '#fcd34d', '#f59e0b', '#c2410c'];
 let rentsOn = false;
+let rentsAbort = null;     // cancel a superseded in-flight fetch, not just ignore it
 let rentsSeq = 0;
 let rentsFC = null;
 
@@ -1634,6 +1640,7 @@ async function refreshRents() {
   const note = document.getElementById('rents-note');
   const src = rentSource();
   if (src === 'zori' && map.getZoom() < 8.5) {
+    rentsAbort?.abort();
     rentsFC = null;
     map.getSource('rents')?.setData({ type: 'FeatureCollection', features: [] });
     if (note) { note.textContent = 'Zoom in to load rents by ZIP…'; note.hidden = false; }
@@ -1643,9 +1650,11 @@ async function refreshRents() {
   const bbox = `${b.getWest().toFixed(5)},${b.getSouth().toFixed(5)},${b.getEast().toFixed(5)},${b.getNorth().toFixed(5)}`;
   if (note) { note.textContent = 'Loading rents…'; note.hidden = false; }
   const seq = ++rentsSeq;
+  rentsAbort?.abort();               // cancel a superseded in-flight fetch
+  rentsAbort = new AbortController();
   try {
     const url = `/api/rents-overlay?bbox=${bbox}&source=${src}` + (src === 'fmr' ? `&beds=${rentBeds()}` : '');
-    const gj = await fetchJSON(url, { timeoutMs: 30000 });
+    const gj = await fetchJSON(url, { timeoutMs: 30000, signal: rentsAbort.signal });
     if (seq !== rentsSeq || !rentsOn) return;      // a newer pan won
     rentsFC = { type: 'FeatureCollection', features: gj.features || [] };
     if (!rentsFC.features.length) {
@@ -1661,7 +1670,8 @@ async function refreshRents() {
       note.hidden = false;
     }
   } catch (e) {
-    if (note) { note.textContent = 'Rent layer unavailable here.'; note.hidden = false; }
+    if (e.name === 'AbortError') return;   // superseded — the new fetch owns the UI
+    if (seq === rentsSeq && note) { note.textContent = 'Rent layer unavailable here.'; note.hidden = false; }
   }
 }
 
@@ -2033,6 +2043,8 @@ function renderDevPanel() {
 // by building floor area. Single-family houses are excluded unless the sub-toggle
 // is on (see /api/permit-heat).
 let permitHeatOn = false;
+let permitHeatSeq = 0;      // latest-pan-wins: stale viewport responses must not repaint
+let permitHeatAbort = null; // cancel a superseded in-flight fetch, not just ignore it
 function wirePermitHeat() {
   const cb = document.getElementById('lyr-permit-heat');
   const controls = document.getElementById('permit-heat-controls');
@@ -2061,6 +2073,7 @@ function wirePermitHeat() {
 async function refreshPermitHeat() {
   const note = document.getElementById('permit-heat-note');
   if (map.getZoom() < 10) {
+    permitHeatAbort?.abort();
     map.getSource('permit_heat')?.setData({ type: 'FeatureCollection', features: [] });
     if (note) { note.textContent = 'Zoom in to load permit density…'; note.hidden = false; }
     return;
@@ -2069,8 +2082,12 @@ async function refreshPermitHeat() {
   const bbox = `${b.getWest().toFixed(5)},${b.getSouth().toFixed(5)},${b.getEast().toFixed(5)},${b.getNorth().toFixed(5)}`;
   const inclSfr = document.getElementById('permit-heat-sfr')?.checked ? '&include_sfr=true' : '';
   if (note) { note.textContent = 'Loading new-construction permits…'; note.hidden = false; }
+  const seq = ++permitHeatSeq;
+  permitHeatAbort?.abort();               // cancel a superseded in-flight fetch
+  permitHeatAbort = new AbortController();
   try {
-    const gj = await fetchJSON(`/api/permit-heat?bbox=${bbox}${inclSfr}`, { timeoutMs: 20000 });
+    const gj = await fetchJSON(`/api/permit-heat?bbox=${bbox}${inclSfr}`, { timeoutMs: 20000, signal: permitHeatAbort.signal });
+    if (seq !== permitHeatSeq || !permitHeatOn) return;  // a newer pan won, or layer toggled off
     map.getSource('permit_heat')?.setData(gj);
     if (note) {
       const n = (gj.features || []).length;
@@ -2080,12 +2097,15 @@ async function refreshPermitHeat() {
       note.hidden = false;
     }
   } catch (e) {
-    if (note) { note.textContent = 'Permit heat unavailable here.'; note.hidden = false; }
+    if (e.name === 'AbortError') return;   // superseded — the new fetch owns the UI
+    if (seq === permitHeatSeq && note) { note.textContent = 'Permit heat unavailable here.'; note.hidden = false; }
   }
 }
 
 // Live metro zoning overlay: fetch polygons for the viewport when toggled on + zoomed in.
 let metroZoningOn = false;
+let metroZoningSeq = 0;      // latest-pan-wins: stale viewport responses must not repaint
+let metroZoningAbort = null; // cancel a superseded in-flight fetch, not just ignore it
 function wireMetroZoning() {
   const cb = document.getElementById('lyr-metro-zoning');
   const massing = () => !!document.getElementById('lyr-zoning-3d')?.checked;
@@ -2135,6 +2155,7 @@ function wireMetroZoning() {
 async function refreshMetroZoning() {
   const note = document.getElementById('metro-zoning-note');
   if (map.getZoom() < 12.5) {
+    metroZoningAbort?.abort();
     map.getSource('metro_zoning')?.setData({ type: 'FeatureCollection', features: [] });
     if (note) { note.textContent = 'Zoom in to load metro zoning…'; note.hidden = false; }
     return;
@@ -2142,8 +2163,12 @@ async function refreshMetroZoning() {
   const b = map.getBounds();
   const bbox = `${b.getWest().toFixed(5)},${b.getSouth().toFixed(5)},${b.getEast().toFixed(5)},${b.getNorth().toFixed(5)}`;
   if (note) { note.textContent = 'Loading zoning…'; note.hidden = false; }
+  const seq = ++metroZoningSeq;
+  metroZoningAbort?.abort();               // cancel a superseded in-flight fetch
+  metroZoningAbort = new AbortController();
   try {
-    const gj = await fetchJSON(`/api/zoning-overlay?bbox=${bbox}`, { timeoutMs: 30000 });
+    const gj = await fetchJSON(`/api/zoning-overlay?bbox=${bbox}`, { timeoutMs: 30000, signal: metroZoningAbort.signal });
+    if (seq !== metroZoningSeq || !metroZoningOn) return;  // a newer pan won, or layer toggled off
     map.getSource('metro_zoning')?.setData(gj);
     if (note) {
       const n = (gj.features || []).length;
@@ -2161,7 +2186,8 @@ async function refreshMetroZoning() {
       note.hidden = false;
     }
   } catch (e) {
-    if (note) { note.textContent = 'Zoning load failed.'; note.hidden = false; }
+    if (e.name === 'AbortError') return;   // superseded — the new fetch owns the UI
+    if (seq === metroZoningSeq && note) { note.textContent = 'Zoning load failed.'; note.hidden = false; }
   }
 }
 
@@ -2171,6 +2197,7 @@ const NTM_STOPS = 'https://services.arcgis.com/xOi1kZaI0eWDREZv/arcgis/rest/serv
 const TRANSIT_LAYERS = ['transit-routes-line', 'transit-stops-pts', 'transit-stops-label-rail', 'transit-stops-label-bus'];
 let transitOn = false;
 let transitSeq = 0;          // latest-pan-wins: stale viewport responses must not repaint
+let transitAbort = null;     // cancel superseded in-flight route+stop fetches, not just ignore them
 let transitCounts = { routes: null, stops: null, stopsTruncated: false };
 
 function transitAllowedTypes() {
@@ -2255,6 +2282,8 @@ function wireTransitRoutes() {
 function refreshTransit() {
   if (!transitOn) return;  // a moveend debounce can fire after the user toggled off
   const seq = ++transitSeq;
+  transitAbort?.abort();               // cancel superseded in-flight route+stop fetches
+  transitAbort = new AbortController();
   if (map.getZoom() < 9.5) {
     map.getSource('transit_routes')?.setData({ type: 'FeatureCollection', features: [] });
     map.getSource('transit_stops')?.setData({ type: 'FeatureCollection', features: [] });
@@ -2263,35 +2292,38 @@ function refreshTransit() {
     return;
   }
   updateTransitNote('Loading transit…');
-  refreshTransitRoutes(seq);
-  refreshTransitStops(seq);
+  refreshTransitRoutes(seq, transitAbort.signal);
+  refreshTransitStops(seq, transitAbort.signal);
 }
 function transitEnvelope() {
   const b = map.getBounds();
   return encodeURIComponent(JSON.stringify({ xmin: b.getWest(), ymin: b.getSouth(), xmax: b.getEast(), ymax: b.getNorth(), spatialReference: { wkid: 4326 } }));
 }
-async function refreshTransitRoutes(seq) {
+async function refreshTransitRoutes(seq, signal) {
   // Dense metros (Manhattan) return ~17 MB of full-resolution route vertices — past any
   // sane timeout. Generalize geometry by zoom; 0.0002° ≈ 20 m, invisible at city scale.
   const z = map.getZoom();
   const offset = z < 11 ? 0.0008 : z < 13 ? 0.0004 : z < 15 ? 0.0002 : 0.00005;
   const url = `${NTM_ROUTES}/query?geometry=${transitEnvelope()}&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=route_short_name,route_long_name,route_type,route_type_text,agency_id&returnGeometry=true&outSR=4326&geometryPrecision=5&maxAllowableOffset=${offset}&resultRecordCount=2000&f=geojson`;
   try {
-    const gj = await fetchJSON(url, { timeoutMs: 20000 });
+    const gj = await fetchJSON(url, { timeoutMs: 20000, signal });
     if (seq !== transitSeq) return;  // user panned again — a newer load owns the layer
     map.getSource('transit_routes')?.setData(gj);
     transitCounts.routes = (gj.features || []).length;
     updateTransitNote();
-  } catch (e) { if (seq === transitSeq) updateTransitNote('Transit route load failed.'); }
+  } catch (e) {
+    if (e.name === 'AbortError') return;   // superseded — the new fetch owns the UI
+    if (seq === transitSeq) updateTransitNote('Transit route load failed.');
+  }
 }
-async function refreshTransitStops(seq) {
+async function refreshTransitStops(seq, signal) {
   // Below z13 only rail/ferry stations load (bus stops would blow the 2000-record cap
   // and bury the map); zoomed in, everything loads and bus names label at z14.5+.
   const includeBus = map.getZoom() >= 13;
   const where = encodeURIComponent(includeBus ? '1=1' : "stop_type NOT IN ('3','11')");
   const url = `${NTM_STOPS}/query?where=${where}&geometry=${transitEnvelope()}&geometryType=esriGeometryEnvelope&inSR=4326&spatialRel=esriSpatialRelIntersects&outFields=stop_name,stop_type,stop_type_text,wheelchair_boarding&returnGeometry=true&outSR=4326&geometryPrecision=6&resultRecordCount=2000&f=geojson`;
   try {
-    const gj = await fetchJSON(url, { timeoutMs: 20000 });
+    const gj = await fetchJSON(url, { timeoutMs: 20000, signal });
     if (seq !== transitSeq) return;
     const feats = gj.features || [];
     for (const f of feats) {
@@ -2305,7 +2337,10 @@ async function refreshTransitStops(seq) {
     transitCounts.stops = feats.length;
     transitCounts.stopsTruncated = feats.length >= 2000;
     updateTransitNote();
-  } catch (e) { if (seq === transitSeq) updateTransitNote('Transit stop load failed.'); }
+  } catch (e) {
+    if (e.name === 'AbortError') return;   // superseded — the new fetch owns the UI
+    if (seq === transitSeq) updateTransitNote('Transit stop load failed.');
+  }
 }
 
 function wireSfhaToggle() {
@@ -2323,6 +2358,8 @@ function wireSfhaToggle() {
 // National FEMA flood — pre-baked FL layers + FEMA NFHL polygons loaded by viewport.
 const NFHL = 'https://hazards.fema.gov/arcgis/rest/services/public/NFHL/MapServer/28';
 let floodOn = false;
+let floodSeq = 0;      // latest-pan-wins: stale viewport responses must not repaint
+let floodAbort = null; // cancel a superseded in-flight fetch, not just ignore it
 function wireNationalFlood() {
   const cb = document.getElementById('lyr-flood');
   if (!cb) return;
@@ -2338,6 +2375,7 @@ function wireNationalFlood() {
 async function refreshNationalFlood() {
   const note = document.getElementById('flood-note');
   if (map.getZoom() < 12) {  // FEMA chokes on wide-area requests — keep the bbox small
+    floodAbort?.abort();
     map.getSource('nfhl_flood')?.setData({ type: 'FeatureCollection', features: [] });
     if (note) { note.textContent = 'Zoom in closer to load FEMA flood zones.'; note.hidden = false; }
     return;
@@ -2346,11 +2384,18 @@ async function refreshNationalFlood() {
   // Proxy via our backend — FEMA's server has no CORS + resets connections.
   const bbox = `${b.getWest().toFixed(5)},${b.getSouth().toFixed(5)},${b.getEast().toFixed(5)},${b.getNorth().toFixed(5)}`;
   if (note) { note.textContent = 'Loading flood zones…'; note.hidden = false; }
+  const seq = ++floodSeq;
+  floodAbort?.abort();               // cancel a superseded in-flight fetch
+  floodAbort = new AbortController();
   try {
-    const gj = await fetchJSON(`/api/flood-overlay?bbox=${bbox}&limit=1200`, { timeoutMs: 25000 });
+    const gj = await fetchJSON(`/api/flood-overlay?bbox=${bbox}&limit=1200`, { timeoutMs: 25000, signal: floodAbort.signal });
+    if (seq !== floodSeq || !floodOn) return;  // a newer pan won, or layer toggled off
     map.getSource('nfhl_flood')?.setData(gj && gj.features ? gj : { type: 'FeatureCollection', features: [] });
     if (note) { const n = (gj.features || []).length; note.textContent = n ? `${n} FEMA flood polygons in view` : 'No mapped flood zones here.'; note.hidden = false; }
-  } catch (e) { if (note) { note.textContent = 'Flood load failed.'; note.hidden = false; } }
+  } catch (e) {
+    if (e.name === 'AbortError') return;   // superseded — the new fetch owns the UI
+    if (seq === floodSeq && note) { note.textContent = 'Flood load failed.'; note.hidden = false; }
+  }
 }
 
 function wireBasemapButtons() {

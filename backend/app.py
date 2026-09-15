@@ -4057,66 +4057,95 @@ async def permit_heat(bbox: str = Query(...), limit: int = Query(2000, le=2000),
         return {"type": "FeatureCollection", "features": [],
                 "note": "No permit source covers this view."}
 
-    def _size_weight(sqft) -> float | None:
-        # Floor area -> heat weight. 25k sf ≈ 1.0; caps at 12 (~300k sf) so one
-        # mega-project can't nuke the scale. This is the "by size" dial.
-        try:
-            s = float(sqft or 0)
-        except (TypeError, ValueError):
-            return None
-        return round(min(12.0, max(0.4, s / 25000.0)), 2) if s > 0 else None
-
-    def _value_weight(val) -> float:
-        # Fallback when a kept building has no floor area (or the source has no sqft
-        # field at all): declared $ on a comparable 0.4–12 curve. $10k→~2, $10M→~5.
-        try:
-            v = float(val or 0)
-        except (TypeError, ValueError):
-            return 1.0
-        return round(min(12.0, max(0.4, math.log10(v) - 2)), 2) if v > 0 else 1.0
-
     async with httpx.AsyncClient(timeout=14.0) as client:
-        for cand in candidates:
-            cfg = cand["cfg"]
-            miami = cfg.get("newbuild_vocab") == "miami"
-            f_sqft = cfg.get("sqft")
-            f_val = cfg.get("value")
-            if miami:
-                where = _miami_newbuild_where(cfg["scope"], cfg["workitems"], include_sfr)
-            else:
-                where = _generic_newbuild_where(cfg, include_sfr)
-            out_fields = ",".join(f for f in (f_sqft, f_val) if f)
-            params = {
-                "geometry": env, "geometryType": "esriGeometryEnvelope", "inSR": "4326",
-                "spatialRel": "esriSpatialRelIntersects", "outFields": out_fields,
-                "returnGeometry": "true", "outSR": "4326", "geometryPrecision": "5",
-                "resultRecordCount": str(limit), "f": "geojson",
-            }
-            if where:
-                params["where"] = where
+        # One task per candidate, run concurrently -- a dead/slow source used to
+        # stall every candidate behind it (worst case N x 14s serial, the same bug
+        # class the zoning overlay had). Priority order is preserved by picking
+        # the first candidate (in the original order) whose task actually found
+        # something, not by which task happened to finish first.
+        tasks = [asyncio.ensure_future(_fetch_permit_candidate(client, cand, env, include_sfr, limit))
+                 for cand in candidates]
+        done, pending = await asyncio.wait(tasks, timeout=14.0)
+        for t in pending:
+            t.cancel()
+        for t, cand in zip(tasks, candidates):
+            if t not in done:
+                continue
             try:
-                r = await client.get(f"{cand['url']}/query", params=params)
-                r.raise_for_status()
-                gj = r.json()
-            except (httpx.HTTPError, ValueError):
+                result = t.result()
+            except Exception:
                 continue
-            if gj.get("error") or not (gj.get("features") or []):
-                continue
-            feats = []
-            for ft in gj["features"]:
-                g = ft.get("geometry") or {}
-                if g.get("type") != "Point":
-                    continue
-                props = ft.get("properties") or {}
-                w = _size_weight(props.get(f_sqft)) if f_sqft else None
-                if w is None:
-                    w = _value_weight(props.get(f_val)) if f_val else 1.0
-                feats.append({"type": "Feature", "geometry": g, "properties": {"w": w}})
-            if feats:
-                return {"type": "FeatureCollection", "features": feats, "source": cand["src"],
-                        "mode": "new-construction buildings" + ("" if include_sfr else ", excl. single-family"),
-                        "weight": "building floor area (sq ft)" if miami else "declared value"}
+            if result is not None:
+                return result
     return {"type": "FeatureCollection", "features": [], "note": "Permit source unavailable here."}
+
+
+def _permit_size_weight(sqft) -> float | None:
+    # Floor area -> heat weight. 25k sf ≈ 1.0; caps at 12 (~300k sf) so one
+    # mega-project can't nuke the scale. This is the "by size" dial.
+    try:
+        s = float(sqft or 0)
+    except (TypeError, ValueError):
+        return None
+    return round(min(12.0, max(0.4, s / 25000.0)), 2) if s > 0 else None
+
+
+def _permit_value_weight(val) -> float:
+    # Fallback when a kept building has no floor area (or the source has no sqft
+    # field at all): declared $ on a comparable 0.4-12 curve. $10k->~2, $10M->~5.
+    try:
+        v = float(val or 0)
+    except (TypeError, ValueError):
+        return 1.0
+    return round(min(12.0, max(0.4, math.log10(v) - 2)), 2) if v > 0 else 1.0
+
+
+async def _fetch_permit_candidate(client, cand, env, include_sfr, limit):
+    """One upstream permit query, fully self-contained -- so it can run
+    concurrently with the others via asyncio.wait instead of one at a time.
+    Returns the final response dict on a usable hit, or None (source empty,
+    unavailable, or errored) so the caller falls through to the next candidate
+    in priority order."""
+    cfg = cand["cfg"]
+    miami = cfg.get("newbuild_vocab") == "miami"
+    f_sqft = cfg.get("sqft")
+    f_val = cfg.get("value")
+    if miami:
+        where = _miami_newbuild_where(cfg["scope"], cfg["workitems"], include_sfr)
+    else:
+        where = _generic_newbuild_where(cfg, include_sfr)
+    out_fields = ",".join(f for f in (f_sqft, f_val) if f)
+    params = {
+        "geometry": env, "geometryType": "esriGeometryEnvelope", "inSR": "4326",
+        "spatialRel": "esriSpatialRelIntersects", "outFields": out_fields,
+        "returnGeometry": "true", "outSR": "4326", "geometryPrecision": "5",
+        "resultRecordCount": str(limit), "f": "geojson",
+    }
+    if where:
+        params["where"] = where
+    try:
+        r = await client.get(f"{cand['url']}/query", params=params)
+        r.raise_for_status()
+        gj = r.json()
+    except (httpx.HTTPError, ValueError):
+        return None
+    if gj.get("error") or not (gj.get("features") or []):
+        return None
+    feats = []
+    for ft in gj["features"]:
+        g = ft.get("geometry") or {}
+        if g.get("type") != "Point":
+            continue
+        props = ft.get("properties") or {}
+        w = _permit_size_weight(props.get(f_sqft)) if f_sqft else None
+        if w is None:
+            w = _permit_value_weight(props.get(f_val)) if f_val else 1.0
+        feats.append({"type": "Feature", "geometry": g, "properties": {"w": w}})
+    if not feats:
+        return None
+    return {"type": "FeatureCollection", "features": feats, "source": cand["src"],
+            "mode": "new-construction buildings" + ("" if include_sfr else ", excl. single-family"),
+            "weight": "building floor area (sq ft)" if miami else "declared value"}
 
 
 # ---------- supply pipeline: competing nearby new-construction permits ----------
