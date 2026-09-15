@@ -24,7 +24,7 @@ if sys.stderr is None:
 PORT = 8012
 UVICORN_MODULE = "backend.app:app"
 APP_DIR_ARG = None
-WINDOW_TITLE = "Groundwork"
+WINDOW_TITLE = "Meridian"
 HEALTH_PATH = "api/shared/status"
 # --------------------------------
 

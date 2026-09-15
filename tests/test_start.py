@@ -115,10 +115,68 @@ def test_the_instance_route_reports_the_folder_it_runs_from():
 
     from backend.app import app
     d = TestClient(app).get("/api/instance").json()
-    assert d["app"] == "Groundwork"
+    assert d["app"] == "Meridian"
     assert Path(d["root"]).resolve() == ROOT
     assert d["pid"] > 0
 
 
 def test_a_port_can_be_chosen_explicitly():
     assert "--port" in SRC
+
+
+# ── the name ───────────────────────────────────────────────────────────────
+
+def test_nothing_user_facing_still_says_the_old_name():
+    """The app is Meridian. The only places the old name may appear are the
+    back-compat paths that deliberately honour it."""
+    allowed = {
+        "backend/updater.py",        # GROUNDWORK_* env vars still honoured
+        "backend/shared_paths.py",   # ~/.groundwork store still found
+        "install.py",                # removes the old shortcut and logon task
+        "README.md",                 # explains that it does
+        "tests/test_start.py",       # this test
+    }
+    exts = {".py", ".js", ".html", ".css", ".md", ".json", ".bat", ".sh", ".command", ".yml"}
+    skip = {".git", ".venv", "venv", "__pycache__", ".pytest_cache", ".backup", "node_modules"}
+    offenders = []
+    for f in ROOT.rglob("*"):
+        if not f.is_file() or any(p in skip for p in f.parts):
+            continue
+        if f.suffix not in exts and f.name != "Dockerfile":
+            continue
+        rel = str(f.relative_to(ROOT)).replace("\\", "/")
+        if rel in allowed:
+            continue
+        try:
+            body = f.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        if "roundwork" in body.lower():
+            offenders.append(rel)
+    assert not offenders, f"still name the old app: {offenders}"
+
+
+def test_the_old_environment_variables_are_still_honoured(monkeypatch):
+    """A rename that silently ignores a variable somebody already set is a
+    rename that costs them an afternoon."""
+    from backend import updater
+    monkeypatch.delenv("MERIDIAN_BRANCH", raising=False)
+    monkeypatch.setenv("GROUNDWORK_BRANCH", "old-name")
+    assert updater._repo()[1] == "old-name"
+    monkeypatch.setenv("MERIDIAN_BRANCH", "new-name")
+    assert updater._repo()[1] == "new-name", "the current name wins"
+
+
+def test_the_old_shortcut_and_logon_task_are_removed_on_install():
+    """A stale logon task starting the old folder is how you end up looking at
+    old code on port 8012 and wondering why nothing changed."""
+    src = (ROOT / "install.py").read_text()
+    assert "Groundwork.lnk" in src
+    assert "Groundwork Server" in src
+
+
+def test_the_app_identifies_itself_by_the_current_name():
+    from fastapi.testclient import TestClient
+
+    from backend.app import app
+    assert TestClient(app).get("/api/instance").json()["app"] == "Meridian"

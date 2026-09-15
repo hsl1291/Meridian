@@ -1,13 +1,13 @@
-r"""Groundwork — install / re-install the launcher wiring on this machine.
+r"""Meridian — install / re-install the launcher wiring on this machine.
 
-OPTIONAL. Groundwork runs from its own folder via start.bat; this only adds a
+OPTIONAL. Meridian runs from its own folder via start.bat; this only adds a
 desktop shortcut and starts it at logon for people who want that.
 
     .venv\Scripts\python.exe install.py             desktop shortcut + auto-start at logon
     .venv\Scripts\python.exe install.py --task      also register a task that re-checks every 15 min
     .venv\Scripts\python.exe install.py --uninstall remove the shortcuts and the task
 
-Groundwork replaces two earlier apps — Sitefolio (the map) and Prospect (the
+Meridian replaces two earlier apps — Sitefolio (the map) and Prospect (the
 tables) — so install also clears their desktop and startup shortcuts and their
 scheduled task. Their folders and data are left alone; only the wiring that
 would start them, or put a second icon on the desktop, is removed.
@@ -46,15 +46,23 @@ def _pythonw() -> Path:
 PYTHONW = _pythonw()
 LAUNCH = ROOT / "launch.py"
 ICON = ROOT / "frontend" / "static" / "favicon.ico"
-APP_NAME = "Groundwork"
-TASK_NAME = "Groundwork Server"
+APP_NAME = "Meridian"
+TASK_NAME = "Meridian Server"
 PORT = 8012
 HEALTH_URL = f"http://127.0.0.1:{PORT}/api/shared/status"
 
-# Apps this one replaces: (desktop shortcut, startup shortcut, scheduled task).
+# Wiring this install replaces: (desktop shortcut, startup shortcut, task).
+#
+# Sitefolio and Prospect are the two apps merged into this one. Groundwork is
+# what this app was called before it was Meridian -- a rename leaves its
+# shortcut on the desktop and its task starting the OLD folder at logon, which
+# is how you end up looking at stale code on port 8012 and wondering why your
+# changes did nothing. Their folders and data are left alone; only the wiring
+# that would start them is removed.
 SUPERSEDED = [
     ("Sitefolio.lnk", "Sitefolio (server).lnk", "Sitefolio Server"),
     ("Prospect.lnk", "Prospect (server).lnk", "Prospect Server"),
+    ("Groundwork.lnk", "Groundwork (server).lnk", "Groundwork Server"),
 ]
 
 # ── minimal COM plumbing for creating .lnk files ────────────────────────────
@@ -173,7 +181,7 @@ def _drop_task(name: str) -> bool:
 
 
 def clear_superseded() -> None:
-    """Remove the wiring for the apps Groundwork replaces."""
+    """Remove the wiring for the apps Meridian replaces."""
     desktop, startup = _desktop(), known_folder(CSIDL_STARTUP)
     found = False
     for desk_lnk, start_lnk, task in SUPERSEDED:
@@ -211,12 +219,12 @@ def install(with_task: bool) -> int:
 
     # 1. Desktop shortcut — opens the app in an Edge app window.
     create_shortcut(desktop_lnk, PYTHONW, f'"{LAUNCH}"',
-                    "Groundwork - parcels, zoning, rents and condo takeovers", ICON)
+                    "Meridian - parcels, zoning, rents and condo takeovers", ICON)
 
     # 2. Start the server at logon, no window, so the app answers immediately.
     #    pythonw.exe is console-less on its own.
     create_shortcut(startup_lnk, PYTHONW, f'"{LAUNCH}" --server-only',
-                    "Groundwork server (background)", ICON)
+                    "Meridian server (background)", ICON)
 
     # 3. Optional: a task that re-checks every 15 minutes. Runs as the current
     #    user, so it needs no elevation.

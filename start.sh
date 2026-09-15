@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start Groundwork. Nothing is installed outside this folder.
+# Start Meridian. Nothing is installed outside this folder.
 set -euo pipefail
 cd "$(dirname "$0")"
 

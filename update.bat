@@ -1,5 +1,5 @@
 @echo off
-REM Double-click to update Groundwork from GitHub, then start it.
+REM Double-click to update Meridian from GitHub, then start it.
 REM Plain Python -- no PowerShell.
 setlocal
 cd /d "%~dp0"

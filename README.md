@@ -1,8 +1,8 @@
-# Groundwork
+# Meridian
 
 Parcels, zoning, rents and condo takeovers on one map, in one app.
 
-Groundwork is the merge of two programs that used to link at each other:
+Meridian is the merge of two programs that used to link at each other:
 **Sitefolio** (the national parcel/zoning map) and **Prospect** (the condo
 termination screen and metro tables). They shared a database and half their
 questions, so they are now one process on one port, and the map is the surface
@@ -19,7 +19,7 @@ everything else hangs off.
 | **Markets** | 469 US metros scored on the drivers of population growth, a job-announcement demand model, and a one-line market due-diligence report |
 | **Reference** | Legends, glossary, how the condo screen works, and every data source — out of the way until you want it |
 
-Everything is stand-alone. Groundwork does not read, call, or require any other
+Everything is stand-alone. Meridian does not read, call, or require any other
 application.
 
 ---
@@ -317,7 +317,10 @@ it resolved, and the script that builds it.
 ```
 
 `install.py` also clears the desktop shortcuts, startup shortcuts and scheduled
-tasks belonging to **Sitefolio** and **Prospect**, the two apps this replaces.
+tasks belonging to **Sitefolio** and **Prospect** — the two apps this replaces —
+and to **Groundwork**, which is what this app was called before it was Meridian.
+That last one matters: a stale logon task starting the old folder is how you end
+up looking at old code on port 8012 and wondering why nothing changed.
 Their folders and data are left alone — only the wiring that would start them is
 removed. No PowerShell anywhere: shortcuts go through the shell's `IShellLink`
 COM interface via ctypes, and the scheduled task through `schtasks.exe`, so
@@ -399,7 +402,7 @@ wherever it is unzipped.
 | `nal_condo_unit` | 391,210 |
 | `pa_parcel` | 585,577 |
 
-`data/prospect.db` is the only database Groundwork writes: the scored `target`
+`data/prospect.db` is the only database Meridian writes: the scored `target`
 table and the stage-2 declaration findings entered against it.
 
 ---

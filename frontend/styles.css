@@ -983,3 +983,14 @@ body { display: flex; }
   font-size: 11px; color: var(--text-dim); letter-spacing: .02em;
   padding: 0 2px 8px; font-variant-numeric: tabular-nums;
 }
+
+/* Which copy is answering. Two installs on one machine is the normal case
+   during an upgrade, and an older one holding the port serves its own stale JS
+   — so the app looks updated while behaving as it did before. */
+.build-chip {
+  font-size: 10px; font-weight: 600; letter-spacing: .04em;
+  color: var(--text-dim); background: var(--bg-panel);
+  border: 1px solid var(--border); border-radius: 3px;
+  padding: 1px 5px; margin-left: 7px; white-space: nowrap;
+  font-variant-numeric: tabular-nums; cursor: help;
+}

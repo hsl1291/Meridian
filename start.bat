@@ -1,5 +1,5 @@
 @echo off
-REM Double-click to start Groundwork. Nothing is installed outside this folder.
+REM Double-click to start Meridian. Nothing is installed outside this folder.
 setlocal
 cd /d "%~dp0"
 

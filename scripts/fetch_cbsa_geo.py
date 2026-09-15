@@ -87,7 +87,7 @@ def main() -> int:
 
     print("Fetching CBSA boundaries from Census TIGERweb")
     feats: list[dict] = []
-    with httpx.Client(timeout=120, headers={"User-Agent": "Groundwork/1.0"}) as client:
+    with httpx.Client(timeout=120, headers={"User-Agent": "Meridian/1.0"}) as client:
         for layer, kind in LAYERS:
             try:
                 feats += fetch_layer(client, layer, kind, args.detail)

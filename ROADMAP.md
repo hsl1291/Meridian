@@ -247,7 +247,7 @@ roll. Every estimate prints both limits.
 **6 days.** The reference point is [Gridics](https://map.gridics.com/us/fl/miami-beach),
 which is Miami-built on Miami 21 and whose whole argument is in its URL fragment:
 `#12.85/25.79458/-80.12569/0/45` — zoom, centre, bearing, and **45° of pitch**. It
-reads zoning as massing. Groundwork draws the same polygons flat.
+reads zoning as massing. Meridian draws the same polygons flat.
 
 What is there today: a MapLibre map on a CARTO raster basemap, a ten-family
 ZoLa-style zoning palette, live municipal polygons for the wired cities, and

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-r"""Start Groundwork from wherever this folder is.
+r"""Start Meridian from wherever this folder is.
 
 Download the repository, open the folder, run this. Nothing is installed outside
 it, no paths need editing, and the only prerequisite is Python 3.11 or newer.
@@ -58,7 +58,7 @@ def check_python():
         need = ".".join(str(n) for n in MIN_PYTHON)
         have = platform.python_version()
         raise SystemExit(
-            f"\n Groundwork needs Python {need} or newer; this is {have}.\n"
+            f"\n Meridian needs Python {need} or newer; this is {have}.\n"
             f" Install a current Python from https://www.python.org/downloads/ and\n"
             f" run this again. On Windows, tick 'Add python.exe to PATH' in the\n"
             f" installer.\n")
@@ -291,7 +291,7 @@ def serve(py: Path, open_browser=True, port=PORT):
         alt = free_port(port + 1)
         if alt is None:
             raise SystemExit(
-                f"\n Port {port} is in use by another copy of Groundwork and no nearby\n"
+                f"\n Port {port} is in use by another copy of Meridian and no nearby\n"
                 f" port is free. Close the other one -- if it starts at logon, run\n"
                 f"   .venv\\Scripts\\python.exe install.py --uninstall\n"
                 f" in that folder -- then run this again.\n")
@@ -318,7 +318,7 @@ def serve(py: Path, open_browser=True, port=PORT):
                 break
             time.sleep(0.5)
 
-    print(f"\n    Groundwork is running:  {url}")
+    print(f"\n    Meridian is running:  {url}")
     print( "    Press Ctrl-C here to stop it.\n")
     try:
         return proc.wait()
@@ -350,7 +350,7 @@ def main():
                     help="install everything and exit without starting")
     args = ap.parse_args()
 
-    print("\n  Groundwork\n  " + "-" * 40)
+    print("\n  Meridian\n  " + "-" * 40)
     check_python()
 
     # Before the venv, deliberately: an update can change requirements.txt, and

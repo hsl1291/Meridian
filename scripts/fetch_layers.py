@@ -83,7 +83,7 @@ LAYERS: list[dict] = [
 
 
 # These polygons are shared: the map draws them and capacity.py resolves zoning
-# against them for development capacity. Writing them into Groundwork's own
+# against them for development capacity. Writing them into Meridian's own
 # data/ would leave Prospect with nothing to read.
 OUT_DIR = shared_layers()
 PAGE = 2000
@@ -173,7 +173,7 @@ def fetch_layer(client: httpx.Client, spec: dict) -> bool:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Fetch Groundwork map layers from ArcGIS.")
+    ap = argparse.ArgumentParser(description="Fetch Meridian map layers from ArcGIS.")
     ap.add_argument("--force", action="store_true", help="re-fetch layers that already exist")
     ap.add_argument("--only", help="comma-separated layer keys to fetch")
     ap.add_argument("--list", action="store_true", help="list layer keys and exit")
@@ -210,7 +210,7 @@ def main() -> int:
     t0 = time.time()
     ok = 0
     with httpx.Client(timeout=TIMEOUT, follow_redirects=True,
-                      headers={"User-Agent": "Groundwork/1.0 (+layer-fetch)"}) as client:
+                      headers={"User-Agent": "Meridian/1.0 (+layer-fetch)"}) as client:
         for spec in todo:
             try:
                 ok += bool(fetch_layer(client, spec))

@@ -15,7 +15,7 @@
 # To run the full app, mount a prebuilt store and point the app at it:
 #   docker run -p 8012:8012 \
 #     -v /path/to/_shared:/shared -e APPS_SHARED=/shared \
-#     -v /path/to/data:/app/data  groundwork
+#     -v /path/to/data:/app/data  meridian
 FROM python:3.12-slim
 WORKDIR /app
 COPY requirements.txt .

@@ -1,4 +1,4 @@
-"""Dev launcher for Groundwork. Port 8012, with reload."""
+"""Dev launcher for Meridian. Port 8012, with reload."""
 import uvicorn
 
 if __name__ == "__main__":

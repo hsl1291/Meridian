@@ -93,7 +93,7 @@ def main() -> int:
     out: dict = {"attribution": "Data: Zillow Research (ZORI)", "zip": {}, "metro": {}}
     asof = None
 
-    with httpx.Client(headers={"User-Agent": "groundwork/1.0"}) as client:
+    with httpx.Client(headers={"User-Agent": "meridian/1.0"}) as client:
         print("ZIP-level ZORI:")
         rows, months = fetch(client, ZIP_URL)
         for row in rows:

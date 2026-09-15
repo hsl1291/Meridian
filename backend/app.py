@@ -289,7 +289,7 @@ async def _query_one_metro_adapter(cfg: dict, lon: float, lat: float, client: ht
 MDC_LAT_MAX = 25.975
 BRO_LAT_MAX = 26.405
 
-app = FastAPI(title="Groundwork")
+app = FastAPI(title="Meridian")
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 app.add_middleware(
     CORSMiddleware,
@@ -387,7 +387,7 @@ app.include_router(site_screen_router)
 
 @app.get("/api/instance")
 def instance():
-    """Which copy of Groundwork is answering on this port.
+    """Which copy of Meridian is answering on this port.
 
     start.py checks this before deciding a port is "already running": an older
     install auto-starting at logon holds 8012, and without this the launcher
@@ -395,7 +395,14 @@ def instance():
     there doing nothing. That is an hour of confusion, and it is one route.
     """
     import os as _o
-    return {"app": "Groundwork", "root": str(APP_ROOT), "pid": _o.getpid()}
+    version = None
+    try:
+        import json as _j
+        version = _j.loads((APP_ROOT / ".version").read_text(encoding="utf-8")).get("sha")
+    except (OSError, ValueError):
+        pass
+    return {"app": "Meridian", "root": str(APP_ROOT), "pid": _o.getpid(),
+            "version": version}
 
 
 @app.get("/api/update/check")

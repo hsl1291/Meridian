@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Update Groundwork from GitHub, then start it.
+# Update Meridian from GitHub, then start it.
 set -euo pipefail
 cd "$(dirname "$0")"
 for py in python3 python; do

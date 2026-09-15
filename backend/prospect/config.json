@@ -110,6 +110,6 @@
   "update": {
     "repo": "hsl1291/Meridian",
     "branch": "main",
-    "_note": "Where the Check for updates button pulls from. Set `branch` to whatever you actually ship from -- pointing it at a branch you no longer merge to would quietly roll an installed copy BACKWARD. The app shows the repo and branch beside the button so this is never a surprise. Overridable per machine with the GROUNDWORK_REPO / GROUNDWORK_BRANCH environment variables."
+    "_note": "Where the Check for updates button pulls from. Set `branch` to whatever you actually ship from -- pointing it at a branch you no longer merge to would quietly roll an installed copy BACKWARD. The app shows the repo and branch beside the button so this is never a surprise. Overridable per machine with the MERIDIAN_REPO / MERIDIAN_BRANCH environment variables."
   }
 }

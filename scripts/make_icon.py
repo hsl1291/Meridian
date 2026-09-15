@@ -1,4 +1,4 @@
-"""One-off: render the Groundwork mark (the same shape as the inline SVG in
+"""One-off: render the Meridian mark (the same shape as the inline SVG in
 frontend/index.html) into favicon.ico + icon PNGs for the desktop shortcut.
 
 Run with a Pillow-equipped interpreter, not the app's own venv:

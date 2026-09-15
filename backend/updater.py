@@ -1,4 +1,4 @@
-r"""Update Groundwork in place from GitHub.
+r"""Update Meridian in place from GitHub.
 
 Downloads the current branch as a zip, unpacks it, and swaps the application
 files -- no git required, so it works on a folder that came from *Download ZIP*
@@ -47,7 +47,7 @@ PROTECTED = {"data", ".venv", "venv", "logs", ".backup", ".git", ".env",
 # Merged rather than overwritten, because these are edited by hand.
 MERGED_JSON = {"backend/prospect/config.json"}
 
-USER_AGENT = "Groundwork-updater"
+USER_AGENT = "Meridian-updater"
 
 
 def _configured() -> dict:
@@ -70,8 +70,14 @@ def _repo() -> tuple[str, str]:
     configuration rather than a constant and why the UI prints it.
     """
     cfg = _configured()
-    return (os.environ.get("GROUNDWORK_REPO") or cfg.get("repo") or DEFAULT_REPO,
-            os.environ.get("GROUNDWORK_BRANCH") or cfg.get("branch") or DEFAULT_BRANCH)
+    # GROUNDWORK_* are the names this app used before it was called Meridian.
+    # Still honoured: a rename that silently ignores a variable somebody already
+    # set is a rename that costs them an afternoon.
+    repo = (os.environ.get("MERIDIAN_REPO") or os.environ.get("GROUNDWORK_REPO")
+            or cfg.get("repo") or DEFAULT_REPO)
+    branch = (os.environ.get("MERIDIAN_BRANCH") or os.environ.get("GROUNDWORK_BRANCH")
+              or cfg.get("branch") or DEFAULT_BRANCH)
+    return repo, branch
 
 
 def _get(url: str, timeout: int = 30) -> bytes:

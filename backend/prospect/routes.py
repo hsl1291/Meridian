@@ -1,7 +1,7 @@
 """HTTP surface for the acquisitions modules.
 
 Mounted into the main app as a router rather than its own FastAPI instance, so
-Groundwork is one process on one port. Two route names had to move when the
+Meridian is one process on one port. Two route names had to move when the
 apps merged — the map side already owned ``/api/cities`` (zoning-coverage
 cities) and ``/api/markets`` (data-coverage map dots), which mean something
 different here:
@@ -576,7 +576,7 @@ def export_xlsx(limit: int = 500, min_score: float = 0, min_units: int = 0):
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    name = f"groundwork_targets_{datetime.now():%Y%m%d}.xlsx"
+    name = f"meridian_targets_{datetime.now():%Y%m%d}.xlsx"
     return StreamingResponse(
         buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{name}"'})

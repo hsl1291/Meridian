@@ -1,5 +1,5 @@
 /* ============================================================
-   Groundwork — workspace
+   Meridian — workspace
    Mode switching plus the three non-map surfaces: condo takeovers
    (table beside the map), the metro screener, and reference.
 
@@ -568,7 +568,7 @@
         // The running process is still the old code. Saying so plainly beats a
         // half-updated app that looks fine and behaves oddly.
         el('update-body').innerHTML = `
-          <div class="note warn"><b>Update installed — restart Groundwork to finish.</b>
+          <div class="note warn"><b>Update installed — restart Meridian to finish.</b>
             The running copy is still the previous version until you do.</div>
           <table class="mini"><tbody>
             <tr><td class="dim" style="width:110px">Files updated</td><td>${fmt(d.changed_count)}</td></tr>

@@ -107,6 +107,26 @@ const BASEMAPS = {
   },
 };
 
+// ---------- which copy is this ----------
+// Two installs on one machine is the normal case during an upgrade, and without
+// this there is nothing on screen to tell them apart: an older copy holding the
+// port serves its own stale JS, so the app LOOKS updated and behaves as it did
+// before. The chip says the port and the folder, which settles it in a glance.
+(async function showBuild() {
+  try {
+    const r = await fetch('/api/instance');
+    if (!r.ok) return;
+    const d = await r.json();
+    const chip = document.getElementById('build-chip');
+    if (!chip) return;
+    const folder = (d.root || '').split(/[\\/]/).filter(Boolean).pop() || '';
+    chip.textContent = `:${location.port || '80'}${folder ? ' · ' + folder : ''}`;
+    chip.title = `${d.app} running from ${d.root}`
+      + (d.version ? `\nversion ${d.version}` : '\nno version stamp — this copy was downloaded, not updated');
+    chip.hidden = false;
+  } catch (e) { /* an older build has no /api/instance, which is itself the answer */ }
+}());
+
 // ---------- hash ----------
 function parseHash() {
   const h = window.location.hash.replace(/^#/, '');

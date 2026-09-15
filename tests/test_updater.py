@@ -223,8 +223,8 @@ def test_the_launchers_need_nothing_but_python():
 def test_the_update_source_is_configuration_not_a_constant(monkeypatch):
     """Pointing this at a branch you no longer merge to would roll an installed
     copy BACKWARD, so it has to be visible and editable."""
-    monkeypatch.delenv("GROUNDWORK_REPO", raising=False)
-    monkeypatch.delenv("GROUNDWORK_BRANCH", raising=False)
+    monkeypatch.delenv("MERIDIAN_REPO", raising=False)
+    monkeypatch.delenv("MERIDIAN_BRANCH", raising=False)
     cfg = json.loads((ROOT / "backend" / "prospect" / "config.json").read_text())
     assert cfg["update"]["repo"] and cfg["update"]["branch"]
     assert "backward" in cfg["update"]["_note"].lower()
@@ -232,7 +232,7 @@ def test_the_update_source_is_configuration_not_a_constant(monkeypatch):
 
 
 def test_the_environment_overrides_the_config(monkeypatch):
-    monkeypatch.setenv("GROUNDWORK_BRANCH", "some-branch")
+    monkeypatch.setenv("MERIDIAN_BRANCH", "some-branch")
     assert updater._repo()[1] == "some-branch"
 
 
@@ -243,6 +243,6 @@ def test_a_broken_config_does_not_stop_the_updater(monkeypatch, tmp_path):
     (root / "backend" / "prospect").mkdir(parents=True)
     (root / "backend" / "prospect" / "config.json").write_text("{ broken", encoding="utf-8")
     monkeypatch.setattr(updater, "APP_ROOT", root)
-    monkeypatch.delenv("GROUNDWORK_REPO", raising=False)
-    monkeypatch.delenv("GROUNDWORK_BRANCH", raising=False)
+    monkeypatch.delenv("MERIDIAN_REPO", raising=False)
+    monkeypatch.delenv("MERIDIAN_BRANCH", raising=False)
     assert updater._repo() == (updater.DEFAULT_REPO, updater.DEFAULT_BRANCH)

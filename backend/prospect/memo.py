@@ -736,7 +736,7 @@ findings here and are never collapsed into one.</div>
 </section>
 
 <div class="foot">
-{escape(name)} · Condominium acquisition memorandum · generated {doc['generated']} by Groundwork.<br>
+{escape(name)} · Condominium acquisition memorandum · generated {doc['generated']} by Meridian.<br>
 {escape(CONFIDENTIALITY)}
 Assembled from public records; figures are subject to verification and do not constitute
 an offer, a commitment, a valuation, or legal or investment advice.

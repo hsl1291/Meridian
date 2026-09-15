@@ -1,7 +1,7 @@
 r"""Where the shared store lives.
 
 The national market tables and the Miami-Dade parcel/owner roll are far larger
-than everything else Groundwork holds, so they live in ONE database outside the
+than everything else Meridian holds, so they live in ONE database outside the
 app folder, shared with anything else that wants them.
 
 This resolution existed in FIVE copies -- app.py, shared_data.py, prospect/db.py,
@@ -57,6 +57,11 @@ def shared_root() -> Path:
         legacy = Path(WINDOWS_DEFAULT)
         if legacy.is_dir():
             return legacy
+    # The name before this app was Meridian. Only if it exists -- otherwise a
+    # rename would orphan a store somebody already built.
+    legacy_home = Path.home() / ".groundwork" / "_shared"
+    if legacy_home.is_dir():
+        return legacy_home
     return APP_ROOT / "data" / "_shared"
 
 
