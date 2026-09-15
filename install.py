@@ -1,8 +1,11 @@
 r"""Groundwork — install / re-install the launcher wiring on this machine.
 
-    venv\Scripts\python.exe install.py             desktop shortcut + auto-start at logon
-    venv\Scripts\python.exe install.py --task      also register a task that re-checks every 15 min
-    venv\Scripts\python.exe install.py --uninstall remove the shortcuts and the task
+OPTIONAL. Groundwork runs from its own folder via start.bat; this only adds a
+desktop shortcut and starts it at logon for people who want that.
+
+    .venv\Scripts\python.exe install.py             desktop shortcut + auto-start at logon
+    .venv\Scripts\python.exe install.py --task      also register a task that re-checks every 15 min
+    .venv\Scripts\python.exe install.py --uninstall remove the shortcuts and the task
 
 Groundwork replaces two earlier apps — Sitefolio (the map) and Prospect (the
 tables) — so install also clears their desktop and startup shortcuts and their
@@ -28,7 +31,19 @@ from ctypes.wintypes import BOOL, DWORD, HANDLE, HWND, LPCWSTR, LPWSTR
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-PYTHONW = ROOT / "venv" / "Scripts" / "pythonw.exe"
+def _pythonw() -> Path:
+    """Prefer .venv (what start.py builds), then the older hand-made venv. Both
+    live inside the app folder, so a shortcut points at the downloaded copy
+    rather than a fixed path somebody has to recreate."""
+    for env in (".venv", "venv"):
+        for exe in ("pythonw.exe", "python.exe"):
+            p = ROOT / env / "Scripts" / exe
+            if p.exists():
+                return p
+    return ROOT / ".venv" / "Scripts" / "pythonw.exe"
+
+
+PYTHONW = _pythonw()
 LAUNCH = ROOT / "launch.py"
 ICON = ROOT / "frontend" / "static" / "favicon.ico"
 APP_NAME = "Groundwork"
@@ -184,7 +199,8 @@ def uninstall() -> int:
 
 def install(with_task: bool) -> int:
     if not PYTHONW.exists():
-        print(f"ERROR: {PYTHONW} not found — create the venv first.")
+        print(f"ERROR: {PYTHONW} not found.")
+        print("Run start.py once first — it creates .venv inside this folder.")
         return 1
 
     print(f"Clearing the wiring for the apps {APP_NAME} replaces...")

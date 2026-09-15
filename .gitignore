@@ -13,5 +13,9 @@ data/*.pmtiles
 data/zori_rents.json
 data/zcta_pop.json
 data/memos/
+data/_shared/
+data/raw/
+data/declarations/
+data/*.xlsx
 node_modules/
 .DS_Store

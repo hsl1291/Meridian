@@ -391,6 +391,21 @@
       <div class="ref-scroll">
         <div class="ref-cols">
 
+          <section class="ref-card" id="update-card">
+            <h2>Version</h2>
+            <div id="update-body"><p class="msg">Checking…</p></div>
+            <div class="actions">
+              <button class="ghost-btn" id="update-check">Check for updates</button>
+              <button class="primary-btn solid" id="update-apply" hidden>Download and install</button>
+              <span class="msg" id="update-msg"></span>
+            </div>
+            <div class="gl-row" style="margin-top:8px">Updates come straight from GitHub as a zip,
+              so this works whether the folder was cloned or downloaded. Your <code>data</code>
+              folder, the Python environment and your logs are never touched, and
+              <code>config.json</code> is merged — anything a new version adds appears, and every
+              value you set stays. Replaced files are backed up to <code>.backup</code> first.</div>
+          </section>
+
           <section class="ref-card">
             <h2>What this covers</h2>
             <table class="ref-table">
@@ -577,6 +592,6 @@
 <script src="zoning3d.js?v=1"></script>
 <script src="charts.js?v=4"></script>
 <script src="app.js?v=78"></script>
-<script src="workspace.js?v=11"></script>
+<script src="workspace.js?v=12"></script>
 </body>
 </html>

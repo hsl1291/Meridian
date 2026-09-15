@@ -379,6 +379,29 @@ except ImportError:  # when run as a top-level module rather than a package
     from site_screen import router as site_screen_router
 app.include_router(site_screen_router)
 
+
+# ── updates ────────────────────────────────────────────────────────────────
+# Download the current branch from GitHub and swap the application files. No git
+# needed, so a folder that came from "Download ZIP" updates the same way a clone
+# does, and no PowerShell anywhere -- this is urllib and zipfile.
+
+@app.get("/api/update/check")
+def update_check():
+    from .updater import check
+    return check()
+
+
+@app.post("/api/update/apply")
+def update_apply(dry_run: bool = Query(False)):
+    """Apply the update. `dry_run` lists what WOULD change and touches nothing.
+
+    data/, .venv/ and logs/ are never replaced, config.json is merged rather
+    than overwritten, and every replaced file is backed up first.
+    """
+    from .updater import apply
+    return apply(dry_run=dry_run)
+
+
 # Acquisitions — condo termination targets, the metro screener, offering
 # memoranda and development capacity. These were the standalone Prospect app;
 # folding them in here is what makes the map and the table one product instead

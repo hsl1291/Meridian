@@ -240,47 +240,75 @@ ramp — otherwise every ZIP in one metro renders the same colour.
 
 ## Running it
 
-Normally you don't: Groundwork starts at sign-in and has a desktop shortcut.
-If it stops answering:
+Download this repository — **Code → Download ZIP**, or clone it — unzip it
+wherever you want it to live, and start it:
 
-```bat
-C:\Apps\Groundwork\venv\Scripts\pythonw.exe C:\Apps\Groundwork\launch.py
+| | |
+|---|---|
+| **Windows** | double-click `start.bat` |
+| **macOS** | double-click `start.command` |
+| **Linux** | `./start.sh` |
+
+The only prerequisite is **Python 3.11 or newer**. On Windows, tick *Add
+python.exe to PATH* when you install it; if it is missing the launcher says so
+and links the download rather than failing with a traceback.
+
+The first run creates `.venv` inside the folder and installs the dependencies
+into it — about a minute, once. Every run after that starts straight away and
+opens <http://127.0.0.1:8012>. Nothing is installed outside the folder, no paths
+need editing, and deleting the folder removes the app completely.
+
+```
+start.bat --fetch          also download the public map and market data
+start.bat --update         update from GitHub first, then start
+start.bat --check-update   say whether an update is available, then stop
+start.bat --reinstall      rebuild .venv from scratch
 ```
 
-`launch.py` health-checks over HTTP, clears anything stuck on port 8012, restarts
-the server, rotates logs, and opens the window. Running it when the app is
-already up is a no-op. `--server-only` starts it headless.
+### Updating
 
-### Installing the launcher wiring
+Double-click **`update.bat`** (`update.command` / `update.sh`), or press
+**Check for updates** in the app's **Reference** tab.
+
+Updates come from GitHub as a zip, so this works whether the folder was cloned
+or downloaded. It is plain Python — `urllib` and `zipfile`, no PowerShell and
+nothing shelled out — and:
+
+- `data\`, `.venv\` and `logs\` are **never** touched
+- `backend\prospect\config.json` is **merged**, not overwritten: anything a new
+  version adds appears, and every value you set — score weights, the firm name on
+  a memo cover, the county table — stays
+- every replaced file is copied to `.backup\<timestamp>\` first
+- the download is unpacked in full before anything is swapped, so a dropped
+  connection leaves the running copy alone
+
+Restart the app afterwards; the running process is still the old code until you
+do, and the app says so rather than pretending otherwise.
+
+### Where the data lives
+
+Everything is inside the folder: `data\` for the databases, declarations and
+memos, and `data\_shared\` for the large national tables. Point
+`APPS_SHARED_DB` at an existing `shared.db` if you already have one elsewhere.
+
+The app runs with no data at all — it reports what is missing rather than
+failing. **Reference → Version** and `/api/selftest` list every dataset, whether
+it resolved, and the script that builds it.
+
+### A desktop shortcut (optional)
 
 ```bat
-venv\Scripts\python.exe install.py              REM desktop shortcut + start at logon
-venv\Scripts\python.exe install.py --task       REM + 15-min self-heal task
-venv\Scripts\python.exe install.py --uninstall  REM remove shortcuts and task; data untouched
+.venv\Scripts\python.exe install.py              REM shortcut + start at logon
+.venv\Scripts\python.exe install.py --task       REM + 15-min self-heal task
+.venv\Scripts\python.exe install.py --uninstall  REM remove them; data untouched
 ```
 
 `install.py` also clears the desktop shortcuts, startup shortcuts and scheduled
 tasks belonging to **Sitefolio** and **Prospect**, the two apps this replaces.
-Their folders and data are left alone — only the wiring that would start them, or
-put a second icon on your desktop, is removed.
-
-No PowerShell anywhere: shortcuts go through the shell's `IShellLink` COM
-interface via ctypes (stdlib only), and the scheduled task through `schtasks.exe`
-as the current user, so nothing needs elevation.
-
-### First run on a new machine
-
-```bat
-cd C:\Apps\Groundwork
-python -m venv venv
-venv\Scripts\python.exe -m pip install -r requirements.txt
-venv\Scripts\python.exe scripts\fetch_layers.py             REM 18 polygon layers, ~53 MB
-venv\Scripts\python.exe scripts\fetch_zori.py               REM Zillow rents, ~0.9 MB
-venv\Scripts\python.exe scripts\fetch_zcta_population.py    REM ACS population, ~3.6 MB
-venv\Scripts\python.exe install.py
-```
-
-Everything downloads from free public sources — no keys, no accounts.
+Their folders and data are left alone — only the wiring that would start them is
+removed. No PowerShell anywhere: shortcuts go through the shell's `IShellLink`
+COM interface via ctypes, and the scheduled task through `schtasks.exe`, so
+nothing needs elevation.
 
 ### Tests
 

@@ -23,27 +23,41 @@ from pathlib import Path
 WINDOWS_DEFAULT = r"C:\Apps\_shared"
 
 
-def shared_root() -> Path:
-    """Locate the shared store. Checked in order, so a copied install works
-    wherever it is unzipped without anyone editing a path:
+APP_ROOT = Path(__file__).resolve().parent.parent
 
-      1. ``APPS_SHARED``                       explicit wins
-      2. a ``_shared`` folder beside the app   the shareable layout
-      3. the platform default                  the original install
+
+def shared_root() -> Path:
+    """Locate the shared store.
+
+    The default is INSIDE the app folder, at ``data/_shared``, so downloading
+    this repository and running it from wherever it landed works with no paths to
+    edit and nothing to create outside it. That is the normal case now: the
+    store lived outside the app because Sitefolio and Prospect both read it, and
+    those are this app.
+
+    The two external locations are still honoured where they already exist, so an
+    existing install keeps its store instead of silently starting an empty one
+    beside the code:
+
+      1. ``APPS_SHARED``                      explicit always wins
+      2. a ``_shared`` folder beside the app  the shareable layout
+      3. ``C:\Apps\_shared`` on Windows       the original install, if present
+      4. ``data/_shared`` in the app folder   the default
     """
     env = os.environ.get("APPS_SHARED")
     if env:
         return Path(env)
-    sibling = Path(__file__).resolve().parent.parent.parent / "_shared"
+    sibling = APP_ROOT.parent / "_shared"
     if sibling.is_dir():
         return sibling
+    # Only when it is actually there. Off Windows this string is a RELATIVE path,
+    # which is how an unconfigured run used to create a directory literally named
+    # C:\Apps\_shared in whatever folder the app started in.
     if os.name == "nt":
-        return Path(WINDOWS_DEFAULT)
-    # Off Windows the Windows default is a relative path, so it must not be
-    # used. A dot-directory under $HOME is at least somewhere a store could
-    # legitimately live, and is never created by accident in whatever directory
-    # the app happened to start in.
-    return Path.home() / ".groundwork" / "_shared"
+        legacy = Path(WINDOWS_DEFAULT)
+        if legacy.is_dir():
+            return legacy
+    return APP_ROOT / "data" / "_shared"
 
 
 def shared_db() -> Path:

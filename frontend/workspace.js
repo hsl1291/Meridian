@@ -30,6 +30,7 @@
   let mode = 'map';
   let recordsLoaded = false;
   let marketsLoaded = false;
+  let refLoaded = false;
 
   function setMode(next) {
     if (next === mode) return;
@@ -43,6 +44,7 @@
     for (const [id, m] of [['ws-records', 'records'], ['ws-markets', 'markets'], ['ws-reference', 'reference']]) {
       el(id).hidden = next !== m;
     }
+    if (next === 'reference' && !refLoaded) { refLoaded = true; wireUpdates(); }
 
     // Reparent the live map rather than making a second one.
     const mapEl = el('map');
@@ -476,6 +478,79 @@
         tr.addEventListener('click', () => selectTarget(tr.dataset.k, true));
       }
     });
+  }
+
+  // ══ updates ═══════════════════════════════════════════════════════════
+  // Straight from GitHub as a zip, so a folder that came from "Download ZIP"
+  // updates the same way a clone does — and nothing shells out to PowerShell.
+  let updateStatus = null;
+
+  function renderUpdate(d) {
+    const box = el('update-body'), apply = el('update-apply');
+    if (!d.ok) {
+      box.innerHTML = `<div class="note warn">${esc(d.error || 'Could not check for updates.')}</div>`;
+      apply.hidden = true;
+      return;
+    }
+    const short = (s) => (s || '').slice(0, 7);
+    const rows = [
+      ['Source', `${esc(d.repo)} · ${esc(d.branch)}`],
+      ['Installed', d.local_sha ? `<span class="mono">${esc(short(d.local_sha))}</span>`
+        : '<span class="dim">not recorded — this copy predates version stamping</span>'],
+      ['Latest', `<span class="mono">${esc(short(d.remote_sha))}</span> ${d.latest_date
+        ? '· ' + esc(d.latest_date.slice(0, 10)) : ''}`],
+    ];
+    box.innerHTML = `<table class="mini"><tbody>${rows.map(([k, v]) =>
+      `<tr><td style="width:88px" class="dim">${k}</td><td>${v}</td></tr>`).join('')}</tbody></table>
+      ${d.latest_message ? `<div class="gl-row"><b>Latest change.</b> ${esc(d.latest_message)}</div>` : ''}
+      ${d.behind ? '<div class="note warn">An update is available.</div>'
+        : d.unknown_local ? `<div class="note">This copy has no version stamp, so there is nothing to
+            compare. Installing will record one and bring it to the latest.</div>`
+        : '<div class="note">Up to date.</div>'}`;
+    apply.hidden = false;
+    apply.textContent = d.behind || d.unknown_local ? 'Download and install' : 'Reinstall latest';
+  }
+
+  async function checkUpdate() {
+    const btn = el('update-check');
+    btn.disabled = true;
+    el('update-msg').textContent = '';
+    try {
+      updateStatus = await fetchJSON('/api/update/check', { timeoutMs: 30000 });
+      renderUpdate(updateStatus);
+    } catch (e) {
+      el('update-body').innerHTML = '<div class="note warn">Could not reach the update service.</div>';
+    } finally { btn.disabled = false; }
+  }
+
+  function wireUpdates() {
+    const check = el('update-check'), apply = el('update-apply'), msg = el('update-msg');
+    if (!check) return;
+    check.addEventListener('click', checkUpdate);
+    apply.addEventListener('click', async () => {
+      apply.disabled = check.disabled = true;
+      msg.textContent = 'Downloading…';
+      let r, d;
+      try {
+        r = await fetch('/api/update/apply', { method: 'POST' });
+        d = await r.json();
+      } catch (e) { msg.textContent = 'Update failed.'; apply.disabled = check.disabled = false; return; }
+      apply.disabled = check.disabled = false;
+      if (!d.ok) { msg.textContent = d.error || 'Update failed.'; return; }
+      if (!d.updated) { msg.textContent = 'Already up to date.'; return; }
+      msg.textContent = `${d.changed_count} file(s) updated.`;
+      // The running process is still the old code. Saying so plainly beats a
+      // half-updated app that looks fine and behaves oddly.
+      el('update-body').innerHTML = `
+        <div class="note warn"><b>Update installed — restart Groundwork to finish.</b>
+          The running copy is still the previous version until you do.</div>
+        <table class="mini"><tbody>
+          <tr><td class="dim" style="width:100px">Files updated</td><td>${fmt(d.changed_count)}</td></tr>
+          ${d.merged.length ? `<tr><td class="dim">Config merged</td><td>your settings kept</td></tr>` : ''}
+          ${d.backup ? `<tr><td class="dim">Backup</td><td class="mono">${esc(d.backup.split(/[\\/]/).pop())}</td></tr>` : ''}
+        </tbody></table>`;
+    });
+    checkUpdate();
   }
 
   // Deal state lives outside `target` because a rebuild rewrites that table

@@ -34,9 +34,19 @@ HEALTH_URL = f"{URL}{HEALTH_PATH}"
 # pythonw.exe, not python.exe: it is a GUI-subsystem binary, so it never
 # allocates a console at all. stdout/stderr are redirected to the log files
 # below, so nothing is lost.
-PYTHON = ROOT / "venv" / "Scripts" / "pythonw.exe"
-if not PYTHON.exists():
-    PYTHON = ROOT / "venv" / "Scripts" / "python.exe"
+# .venv is what start.py creates; `venv` is the older hand-made layout. Both are
+# inside the app folder, so a downloaded copy is self-contained either way.
+def _find_python() -> Path:
+    for env in (".venv", "venv"):
+        base = ROOT / env / ("Scripts" if os.name == "nt" else "bin")
+        for exe in ("pythonw.exe", "python.exe", "python3", "python"):
+            p = base / exe
+            if p.exists():
+                return p
+    return Path(sys.executable)
+
+
+PYTHON = _find_python()
 LOG_DIR = ROOT / "logs"
 
 CREATE_NO_WINDOW = 0x08000000
