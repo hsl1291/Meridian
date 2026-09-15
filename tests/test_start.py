@@ -124,6 +124,69 @@ def test_a_port_can_be_chosen_explicitly():
     assert "--port" in SRC
 
 
+def test_setup_only_installs_without_starting_a_server():
+    """install.bat's one-click chain depends on this: it must be able to
+    finish the .venv/deps bootstrap and hand back control without also
+    launching uvicorn, or a double-click would leave a server orphaned before
+    install.py ever runs."""
+    fn = SRC[SRC.index("def main("):]
+    assert "--setup-only" in fn
+    assert "setup_only" in fn
+    assert (
+        "if args.setup_only:\n"
+        '        say("ready. Run this again without --setup-only to start.")\n'
+        "        return 0\n"
+    ) in fn, "the setup_only branch must return before falling through to serve()"
+
+
+# ── the one-click installer ──────────────────────────────────────────────────
+
+INSTALL_BAT = (ROOT / "install.bat").read_text()
+
+
+def test_install_bat_exists_and_is_a_real_batch_file():
+    assert INSTALL_BAT.lower().startswith("@echo off")
+
+
+def test_install_bat_bootstraps_the_venv_before_installing_the_shortcut():
+    """The whole point: one double-click on a bare clone (no .venv yet) must
+    both build the environment AND install the shortcut, not require running
+    start.bat first and install.py by hand second."""
+    assert "start.py --setup-only" in INSTALL_BAT
+    setup_idx = INSTALL_BAT.index("start.py --setup-only")
+    install_idx = INSTALL_BAT.index("python.exe install.py")
+    assert install_idx > setup_idx, "install.py must run after the venv is set up"
+
+
+def test_install_bat_uses_no_powershell():
+    import re
+    for banned in (r"powershell(\.exe)?\s+[-/]", r"\bpwsh\b", r"Invoke-WebRequest",
+                   r"Start-Process"):
+        assert not re.search(banned, INSTALL_BAT, re.I), banned
+
+
+def test_install_bat_reports_missing_python_the_same_way_start_bat_does():
+    """Copy-paste drift check: both launchers hit the same failure mode (no
+    python on PATH) and should send the user to the same fix."""
+    start_bat = (ROOT / "start.bat").read_text()
+    assert "python.org/downloads" in INSTALL_BAT
+    assert "Add python.exe to PATH" in INSTALL_BAT
+    assert "python.org/downloads" in start_bat  # sanity: still true of the sibling script
+
+
+def test_install_bat_pauses_so_the_window_does_not_vanish_before_its_read():
+    """A .bat launched by double-click runs in a console that closes itself
+    the moment the script ends -- without a trailing pause, "Installed" would
+    flash and disappear before anyone could read it."""
+    assert INSTALL_BAT.rstrip().splitlines()[-2:] != []
+    assert "pause" in INSTALL_BAT.lower()
+
+
+def test_install_bat_tells_the_user_whether_it_actually_worked():
+    assert "Installed" in INSTALL_BAT
+    assert "errorlevel" in INSTALL_BAT.lower() or "%errorlevel%" in INSTALL_BAT.lower()
+
+
 # ── the name ───────────────────────────────────────────────────────────────
 
 def test_nothing_user_facing_still_says_the_old_name():

@@ -3,6 +3,7 @@ r"""Meridian — install / re-install the launcher wiring on this machine.
 OPTIONAL. Meridian runs from its own folder via start.bat; this only adds a
 desktop shortcut and starts it at logon for people who want that.
 
+    install.bat                                     double-click: sets up .venv, then this
     .venv\Scripts\python.exe install.py             desktop shortcut + auto-start at logon
     .venv\Scripts\python.exe install.py --task      also register a task that re-checks every 15 min
     .venv\Scripts\python.exe install.py --uninstall remove the shortcuts and the task

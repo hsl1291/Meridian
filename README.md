@@ -308,10 +308,16 @@ The app runs with no data at all — it reports what is missing rather than
 failing. **Reference → Version** and `/api/selftest` list every dataset, whether
 it resolved, and the script that builds it.
 
-### A desktop shortcut (optional)
+### Installing it as a standalone app (optional, Windows)
+
+Double-click **`install.bat`**. It sets up `.venv` if `start.bat` has not
+already been run, then adds a desktop shortcut that opens Meridian in its own
+window and starts the server automatically at logon — after that, the folder
+behaves like an installed app rather than something you run from a console.
 
 ```bat
-.venv\Scripts\python.exe install.py              REM shortcut + start at logon
+install.bat                                      REM one click: sets up .venv, then the shortcut
+.venv\Scripts\python.exe install.py              REM shortcut + start at logon, without the setup step
 .venv\Scripts\python.exe install.py --task       REM + 15-min self-heal task
 .venv\Scripts\python.exe install.py --uninstall  REM remove them; data untouched
 ```
