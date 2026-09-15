@@ -4053,6 +4053,13 @@ async def permit_heat(bbox: str = Query(...), limit: int = Query(2000, le=2000),
                            "cfg": {"desc": "DESC1", "type": "APPTYPE", "value": "ESTVALUE"}})
     candidates += [{"url": c["url"], "src": f"{c.get('city')}, {c.get('state')}", "cfg": c}
                    for c in _nearby_cities(CITY_PERMITS, cx, cy, deg=0.45) if c.get("url")]
+    # Capped, same as the zoning overlay's candidate list. Serially this list
+    # was self-limiting -- the loop stopped at the first candidate with data,
+    # so an unbounded nearby-city list rarely cost more than one or two real
+    # requests. Firing every candidate concurrently (below) loses that natural
+    # limit, so a dense multi-city area would otherwise blast every nearby
+    # permit service on every pan just to use one response and discard the rest.
+    candidates = candidates[:8]
     if not candidates:
         return {"type": "FeatureCollection", "features": [],
                 "note": "No permit source covers this view."}

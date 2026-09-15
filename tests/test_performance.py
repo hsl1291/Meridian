@@ -354,6 +354,45 @@ def test_permit_heat_route_runs_candidates_concurrently():
     asyncio.run(run())
 
 
+def test_permit_candidates_are_capped_even_though_only_one_is_needed():
+    """_nearby_cities has no cap of its own -- the serial version relied on
+    stopping at the first candidate with data to keep that harmless, usually
+    costing one or two real requests. Firing every candidate concurrently
+    loses that natural limit, so a dense multi-city registry must be capped
+    explicitly or one pan would blast every nearby permit service at once."""
+    import httpx
+
+    async def run():
+        call_count = {"n": 0}
+        orig_get = httpx.AsyncClient.get
+
+        async def fake_get(self, url, params=None, **kw):
+            if isinstance(url, str) and url.startswith("https://x"):
+                call_count["n"] += 1
+                await asyncio.sleep(0.05)
+                return _SlowResponse(0, {"features": []})
+            return await orig_get(self, url, params=params, **kw)
+
+        real_nearby = appmod._nearby_cities
+        appmod._nearby_cities = lambda *a, **kw: [
+            {"url": f"https://x{i}", "city": f"City{i}", "state": "FL", "lon": -80.1, "lat": 25.7}
+            for i in range(30)  # far more than any real fan-out should touch
+        ]
+        httpx.AsyncClient.get = fake_get
+        try:
+            transport = httpx.ASGITransport(app=app)
+            async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+                r = await client.get("/api/permit-heat",
+                                     params={"bbox": "-80.2,25.7,-80.1,25.8"})
+        finally:
+            appmod._nearby_cities = real_nearby
+            httpx.AsyncClient.get = orig_get
+
+        assert r.status_code == 200
+        assert call_count["n"] <= 8, f"{call_count['n']} concurrent candidate requests fired for one pan"
+    asyncio.run(run())
+
+
 # ── declaration upload no longer blocks the event loop ──────────────────────
 
 def test_upload_declaration_offloads_extraction_to_a_thread():
