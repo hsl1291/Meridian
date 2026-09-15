@@ -83,7 +83,7 @@ def legal_names(con):
 def site_coords(con):
     """group_key -> (lon, lat), reprojected from the site's land parcels.
     The county publishes X/Y in State Plane Florida East (EPSG:2236, feet);
-    Sitefolio wants WGS84. Averaged across the site's parcels so a sprawling
+    the map wants WGS84. Averaged across the site's parcels so a sprawling
     complex lands in its middle rather than on one corner lot."""
     from pyproj import Transformer
     tf = Transformer.from_crs(2236, 4326, always_xy=True)

@@ -946,3 +946,17 @@ body { display: flex; }
   color: var(--text-dim); margin: 10px 0 4px;
 }
 @media (max-width: 640px) { .flows-cols { grid-template-columns: 1fr; } }
+
+/* A map that renders nothing looks the same as a map with nothing to show. */
+.map-warning {
+  position: absolute; left: 50%; transform: translateX(-50%); top: 12px; z-index: 5;
+  max-width: min(560px, calc(100% - 32px));
+  background: var(--bg); border: 1px solid var(--warn); border-left-width: 3px;
+  border-radius: var(--radius); box-shadow: var(--shadow-pop);
+  padding: 9px 36px 9px 12px; font-size: 12px; line-height: 1.45; color: var(--text);
+}
+.map-warning span { color: var(--text-muted); }
+.map-warning button {
+  position: absolute; top: 4px; right: 6px; border: 0; background: none;
+  font-size: 16px; line-height: 1; color: var(--text-dim); cursor: pointer; padding: 4px;
+}

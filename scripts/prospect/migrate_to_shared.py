@@ -1,5 +1,5 @@
 """One-time migration: move the shared tables out of prospect.db into the
-shared store that Sitefolio also reads.
+shared store the map side also reads.
 
     venv\\Scripts\\python.exe scripts\\prospect\\migrate_to_shared.py            migrate
     venv\\Scripts\\python.exe scripts\\prospect\\migrate_to_shared.py --status   report only

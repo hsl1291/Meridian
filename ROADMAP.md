@@ -610,9 +610,14 @@ of the coastal counties.
   by the app instead of by reading logs. It also closes the built-but-empty gap
   Phase 0 left open: row counts distinguish a screen that found nothing from one
   that was never built, which a 503 cannot. ~0.5 day.
-- **Basemap has no fallback.** Tiles come from `basemaps.cartocdn.com` and
-  `server.arcgisonline.com` with no key and no alternative — if either
-  rate-limits or changes terms the map goes blank with no diagnostic. ~0.5 day.
+- **Basemap provider risk.** ✅ Happened. CARTO began requiring an API key and
+  started serving tiles watermarked *API KEY REQUIRED* — a 200 response, so
+  nothing errored, nothing retried, and the map quietly rendered a nag screen.
+  All four CARTO dependencies (two basemaps, the satellite label overlay, and the
+  **glyph endpoint**, which every text layer depends on) moved to keyless Esri
+  and the OpenMapTiles font CDN, with per-service attribution and a visible
+  banner for the half of this failure mode that does raise an error. Pinned by
+  tests. The lesson stands: a gated tile is not a failed one.
 - **FastAPI `regex=` is deprecated** in favour of `pattern=` at
   `site_screen.py:917` and `app.py:2615`. Two lines, and a warning that becomes a
   break. ~10m.

@@ -1,4 +1,4 @@
-"""SQLite schema + connection for Prospect.
+"""SQLite schema + connection for the acquisitions side of Groundwork.
 
 Three layers:
   raw      nal_condo_unit, dbpr_association, pa_parcel   (ingested; never hand-edited)

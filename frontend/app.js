@@ -57,24 +57,53 @@ const FLOOD_PALETTE = {
 const FLOOD_DEFAULT = '#cbd5e1';
 const SFHA_CODES = ['A', 'AE', 'AH', 'AO', 'V', 'VE'];
 
+// Basemaps. Keyless, and deliberately all from one provider.
+//
+// CARTO's raster endpoints began requiring an API key and started serving tiles
+// watermarked "API KEY REQUIRED" -- which is a 200 response, so nothing errors,
+// nothing retries, and the map just quietly renders a nag screen. Esri's ArcGIS
+// Online tile services need no key and the satellite layer here already used
+// them, so that host was the one already proven to work in this app.
+//
+// `labels` is a separate reference overlay. Esri's Light Gray Base and World
+// Imagery carry no place names at all -- they are designed to sit under one --
+// so a basemap without this entry renders an unlabelled map, not a subtly
+// different one.
+const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services';
+
+// Glyphs, and the one font stack every symbol layer asks for. MapLibre's default
+// stack is ["Open Sans Regular","Arial Unicode MS Regular"], and it requests the
+// whole comma-joined stack as one path — so a host that does not carry BOTH
+// faces 404s and the layer disappears with no error anyone sees. Naming a single
+// face the host is known to serve removes that failure mode.
+const GLYPHS = 'https://fonts.openmaptiles.org/{fontstack}/{range}.pbf';
+const FONT = ['Open Sans Regular'];
+// Attribution differs by service and is a licence condition, not decoration.
+const ESRI_VECTOR_ATTR =
+  'Tiles &copy; Esri &mdash; Esri, HERE, Garmin, &copy; OpenStreetMap contributors, and the GIS user community';
+const ESRI_IMAGERY_ATTR =
+  'Tiles &copy; Esri &mdash; Esri, Maxar, Earthstar Geographics, and the GIS user community';
+
 const BASEMAPS = {
   voyager: {
     type: 'raster',
-    tiles: ['https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png'],
+    tiles: [`${ESRI}/World_Street_Map/MapServer/tile/{z}/{y}/{x}`],
     tileSize: 256,
-    attribution: '&copy; OpenStreetMap, &copy; CARTO',
+    attribution: ESRI_VECTOR_ATTR,
   },
   satellite: {
     type: 'raster',
-    tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+    tiles: [`${ESRI}/World_Imagery/MapServer/tile/{z}/{y}/{x}`],
     tileSize: 256,
-    attribution: 'Tiles &copy; Esri',
+    attribution: ESRI_IMAGERY_ATTR,
+    labels: [`${ESRI}/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}`],
   },
   light: {
     type: 'raster',
-    tiles: ['https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png'],
+    tiles: [`${ESRI}/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}`],
     tileSize: 256,
-    attribution: '&copy; OpenStreetMap, &copy; CARTO',
+    attribution: ESRI_VECTOR_ATTR,
+    labels: [`${ESRI}/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}`],
   },
 };
 
@@ -105,8 +134,11 @@ const map = new maplibregl.Map({
   style: {
     version: 8,
     // Without a glyphs endpoint every symbol (text) layer is silently rejected —
-    // stop names, city labels and RG project labels all depend on this.
-    glyphs: 'https://tiles.basemaps.cartocdn.com/fonts/{fontstack}/{range}.pbf',
+    // stop names, city labels and target labels all depend on this. It was on
+    // CARTO, the same vendor that started gating the raster tiles; this one is
+    // the OpenMapTiles font CDN, which is keyless by design and is what most
+    // open styles point at. FONT below pins the exact stack it serves.
+    glyphs: GLYPHS,
     sources: { basemap: BASEMAPS.light },
     layers: [{ id: 'basemap', type: 'raster', source: 'basemap' }],
   },
@@ -129,6 +161,43 @@ if (window.ResizeObserver) {
   new ResizeObserver(() => map.resize()).observe(document.getElementById('map'));
 }
 
+// Basemap and glyph failures used to be invisible. A missing glyph endpoint
+// drops every text layer with nothing in the UI to say so, and a gated tile
+// server can return a perfectly valid 200 carrying a watermark that says API KEY
+// REQUIRED -- which no error handler will ever see, because nothing failed.
+//
+// This catches the half that does raise, and names which half it was, so the
+// next time a provider changes its terms it takes minutes to diagnose instead of
+// a squint at the map.
+let mapWarned = null;
+function warnMap(kind, detail) {
+  if (mapWarned === kind) return;
+  mapWarned = kind;
+  let el = document.getElementById('map-warning');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'map-warning';
+    el.className = 'map-warning';
+    document.getElementById('map').appendChild(el);
+  }
+  const what = kind === 'glyphs'
+    ? 'Map labels are unavailable — the font server did not answer, so every text layer is hidden.'
+    : 'Basemap tiles are not loading.';
+  el.innerHTML = `<b>${what}</b> <span>${detail}</span>
+    <button type="button" aria-label="Dismiss">&times;</button>`;
+  el.querySelector('button').addEventListener('click', () => el.remove());
+}
+
+map.on('error', (e) => {
+  const url = (e && e.error && e.error.url) || '';
+  if (!url) return;
+  if (url.includes('{fontstack}') || /\/fonts?\//.test(url)) {
+    warnMap('glyphs', 'Set GLYPHS in app.js to another keyless font host.');
+  } else if (url.includes('/MapServer/tile/')) {
+    warnMap('tiles', 'Try another basemap, or change BASEMAPS in app.js.');
+  }
+});
+
 let activeBasemap = 'light';
 function setBasemap(key) {
   if (!BASEMAPS[key] || key === activeBasemap) return;
@@ -136,9 +205,13 @@ function setBasemap(key) {
   // can't crash on a not-yet-loaded style the way getStyle()/setStyle() can).
   const src = map.getSource('basemap');
   if (src && src.setTiles) src.setTiles(BASEMAPS[key].tiles);
-  // Satellite gets a road/label overlay (hybrid) so it's navigable.
+  // Swap the label overlay to match, and hide it for a basemap that has its own
+  // names baked in — two sets of labels on one map is worse than none.
+  const labels = BASEMAPS[key].labels;
   if (map.getLayer('basemap-labels')) {
-    map.setLayoutProperty('basemap-labels', 'visibility', key === 'satellite' ? 'visible' : 'none');
+    const lsrc = map.getSource('basemap-labels');
+    if (labels && lsrc && lsrc.setTiles) lsrc.setTiles(labels);
+    map.setLayoutProperty('basemap-labels', 'visibility', labels ? 'visible' : 'none');
   }
   activeBasemap = key;
   // Scoped to the basemap segment: `.seg-btn` is also the broker type filter,
@@ -577,17 +650,18 @@ function toast(msg) {
 // registered as early as they can be, and drops a dependency on paint that this
 // block never had a reason to carry.
 map.on('style.load', () => {
-  // ---- Satellite hybrid labels (roads + place names over imagery). Added first so
-  // it sits above the basemap raster but below every data layer. Shown only in
-  // satellite mode via setBasemap().
+  // ---- Place-name overlay. Added first so it sits above the basemap raster but
+  // below every data layer. Which basemaps need it is a property of the basemap
+  // (see BASEMAPS.labels), not a special case for satellite: Esri's Light Gray
+  // Base carries no labels either.
   map.addSource('basemap-labels', {
     type: 'raster',
-    tiles: ['https://basemaps.cartocdn.com/rastertiles/voyager_only_labels/{z}/{x}/{y}.png'],
+    tiles: BASEMAPS[activeBasemap].labels || BASEMAPS.light.labels,
     tileSize: 256,
-    attribution: '&copy; OpenStreetMap, &copy; CARTO',
+    attribution: ESRI_VECTOR_ATTR,
   });
   map.addLayer({ id: 'basemap-labels', type: 'raster', source: 'basemap-labels',
-    layout: { visibility: activeBasemap === 'satellite' ? 'visible' : 'none' } });
+    layout: { visibility: BASEMAPS[activeBasemap].labels ? 'visible' : 'none' } });
 
   // ---- Miami-Dade Zoning
   map.addSource('mdc_zoning', { type: 'geojson', data: '/data/mdc_zoning.geojson' });
@@ -767,12 +841,12 @@ map.on('style.load', () => {
     } });
   map.addLayer({ id: 'transit-stops-label-rail', type: 'symbol', source: 'transit_stops', minzoom: 10,
     filter: ['!=', ['get', 'is_bus'], 1],
-    layout: { visibility: 'none', 'text-field': ['get', 'stop_name'], 'text-size': 11,
+    layout: { visibility: 'none', 'text-font': FONT, 'text-field': ['get', 'stop_name'], 'text-size': 11,
       'text-offset': [0, 1.1], 'text-anchor': 'top', 'text-max-width': 12 },
     paint: { 'text-color': '#0f172a', 'text-halo-color': '#fff', 'text-halo-width': 1.5 } });
   map.addLayer({ id: 'transit-stops-label-bus', type: 'symbol', source: 'transit_stops', minzoom: 14.5,
     filter: ['==', ['get', 'is_bus'], 1],
-    layout: { visibility: 'none', 'text-field': ['get', 'stop_name'], 'text-size': 10,
+    layout: { visibility: 'none', 'text-font': FONT, 'text-field': ['get', 'stop_name'], 'text-size': 10,
       'text-offset': [0, 0.9], 'text-anchor': 'top', 'text-max-width': 12 },
     paint: { 'text-color': '#1e3a8a', 'text-halo-color': '#fff', 'text-halo-width': 1.3 } });
 
@@ -822,6 +896,7 @@ map.on('style.load', () => {
     paint: { 'line-color': 'rgba(255,255,255,0.65)', 'line-width': 0.6 } });
   map.addLayer({ id: 'pop-label', type: 'symbol', source: 'pop_growth', minzoom: 10.5, layout: {
       visibility: 'none',
+      'text-font': FONT,
       'text-field': ['case', ['==', ['coalesce', ['get', 'growth'], NO_DATA], NO_DATA], '',
         ['concat', ['case', ['>=', ['coalesce', ['get', 'growth'], 0], 0], '+', ''],
           ['to-string', ['round', ['get', 'growth']]], '%']],
@@ -839,7 +914,7 @@ map.on('style.load', () => {
   map.addLayer({ id: 'rents-line', type: 'line', source: 'rents', layout: { visibility: 'none' },
     paint: { 'line-color': 'rgba(255,255,255,0.7)', 'line-width': 0.7 } });
   map.addLayer({ id: 'rents-label', type: 'symbol', source: 'rents', minzoom: 9.5,
-    layout: { visibility: 'none', 'text-field': ['get', '_lbl'], 'text-size': 11 },
+    layout: { visibility: 'none', 'text-font': FONT, 'text-field': ['get', '_lbl'], 'text-size': 11 },
     paint: { 'text-color': '#111827', 'text-halo-color': 'rgba(255,255,255,0.92)',
       'text-halo-width': 1.4 } });
 
@@ -860,7 +935,7 @@ map.on('style.load', () => {
     paint: { 'circle-radius': 16, 'circle-color': 'rgba(0,0,0,0)',
       'circle-stroke-color': '#0f172a', 'circle-stroke-width': 3 } });
   map.addLayer({ id: 'targets-label', type: 'symbol', source: 'targets', minzoom: 13,
-    layout: { visibility: 'none', 'text-field': ['get', 'condo_name'], 'text-size': 10.5,
+    layout: { visibility: 'none', 'text-font': FONT, 'text-field': ['get', 'condo_name'], 'text-size': 10.5,
       'text-offset': [0, 1.3], 'text-anchor': 'top', 'text-max-width': 12 },
     paint: { 'text-color': '#0f172a', 'text-halo-color': '#fff', 'text-halo-width': 1.4 } });
 
@@ -923,7 +998,7 @@ map.on('style.load', () => {
       'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5, 'circle-opacity': 0.92,
     } });
   map.addLayer({ id: 'zoning-cities-label', type: 'symbol', source: 'zoning_cities', minzoom: 6,
-    layout: { 'text-field': ['get', 'city'], 'text-size': 10, 'text-offset': [0, 1.1], 'text-anchor': 'top' },
+    layout: { 'text-font': FONT, 'text-field': ['get', 'city'], 'text-size': 10, 'text-offset': [0, 1.1], 'text-anchor': 'top' },
     paint: { 'text-color': '#0f766e', 'text-halo-color': '#fff', 'text-halo-width': 1.4 } });
 
   // map-dependent wiring (layer events, hovers, viewport handlers, style filters)
