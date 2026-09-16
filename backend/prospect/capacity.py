@@ -212,7 +212,7 @@ def _jurisdiction_ceiling(munic: str) -> dict:
                     continue
                 m = p.get("MUNICNAME") or ""
                 if d > acc.get(m, 0.0):
-                    acc[n] = d
+                    acc[m] = d
             _ceilings = {m: {"max_density": v} for m, v in acc.items()}
     return _ceilings.get(munic, {"max_density": None})
 
