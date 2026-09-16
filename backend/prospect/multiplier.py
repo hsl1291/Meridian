@@ -179,8 +179,11 @@ def estimate(con, cbsa: str, naics: str, jobs: int,
     out.households = round(out.total_jobs / WORKERS_PER_HOUSEHOLD)
     out.housing_units = round(out.households * VACANCY_FACTOR)
     if out.total_payroll and out.households:
-        out.avg_household_income = round(out.total_payroll / out.households
-                                         * WORKERS_PER_HOUSEHOLD)
+        # households is already total_payroll's own worker count divided down
+        # by WORKERS_PER_HOUSEHOLD, so total_payroll / households already
+        # lands on income per household -- multiplying by WORKERS_PER_HOUSEHOLD
+        # again double-counted it and overstated every figure by that factor.
+        out.avg_household_income = round(out.total_payroll / out.households)
         out.notes.append(f"Household income assumes {WORKERS_PER_HOUSEHOLD} workers per "
                          f"household (ACS national average)")
     out.notes.append(f"Housing units include a {int((VACANCY_FACTOR-1)*100)}% vacancy allowance")
