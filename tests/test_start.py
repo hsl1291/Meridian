@@ -187,6 +187,51 @@ def test_install_bat_tells_the_user_whether_it_actually_worked():
     assert "errorlevel" in INSTALL_BAT.lower() or "%errorlevel%" in INSTALL_BAT.lower()
 
 
+# ── auto-update ──────────────────────────────────────────────────────────────
+
+INSTALL_PY = (ROOT / "install.py").read_text()
+LAUNCH_PY = (ROOT / "launch.py").read_text()
+
+
+def test_the_recurring_task_is_on_by_default_not_opt_in():
+    """Auto-update only actually recurs while the machine is on if the 15-min
+    task is registered -- the one-click install.bat path calls install.py
+    with no flags, so the task has to be the default rather than something
+    that used to require typing --task."""
+    fn = INSTALL_PY[INSTALL_PY.index("if __name__"):]
+    assert '"--no-task" not in sys.argv' in fn
+    assert '"--task" in sys.argv' not in fn, "the flag must not still be opt-in"
+
+
+def test_the_recurring_task_can_still_be_declined():
+    assert "--no-task" in INSTALL_PY
+
+
+def test_launch_rate_limits_the_github_check_so_the_15min_task_is_safe():
+    """The self-heal task install.py registers fires every 15 minutes; without
+    its own rate limit, wiring auto-update into it would hit the GitHub API
+    roughly 96 times a day per installed copy."""
+    fn = LAUNCH_PY[LAUNCH_PY.index("def check_for_update("):LAUNCH_PY.index("def open_window(")]
+    assert "_update_due()" in fn
+    assert "UPDATE_CHECK_INTERVAL_HOURS" in LAUNCH_PY
+
+
+def test_an_applied_update_restarts_the_server_not_just_a_dead_one():
+    """The whole point: swapping files on disk does nothing to a process that
+    already has the old ones loaded, so main() must restart on an applied
+    update even when the (stale) server is still answering health checks."""
+    fn = LAUNCH_PY[LAUNCH_PY.index("def main("):]
+    assert "updated = check_for_update()" in fn
+    assert "if updated or not is_healthy():" in fn
+
+
+def test_launch_uses_no_powershell_for_the_update_check():
+    import re
+    fn = LAUNCH_PY[LAUNCH_PY.index("def check_for_update("):LAUNCH_PY.index("def open_window(")]
+    for banned in (r"powershell(\.exe)?\s+[-/]", r"\bpwsh\b", r"Invoke-WebRequest"):
+        assert not re.search(banned, fn, re.I), banned
+
+
 # ── the name ───────────────────────────────────────────────────────────────
 
 def test_nothing_user_facing_still_says_the_old_name():

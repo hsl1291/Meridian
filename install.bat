@@ -1,8 +1,10 @@
 @echo off
 REM Double-click to install Meridian as a standalone app: sets up its own
 REM .venv (same as start.bat, skipped if that already ran), then adds a
-REM desktop shortcut and starts it automatically at logon. Nothing is
-REM installed outside this folder except that shortcut and the logon entry --
+REM desktop shortcut, starts it automatically at logon, and registers a task
+REM that keeps it updated from GitHub with no further clicks (see launch.py
+REM and install.py for exactly what that checks and how often). Nothing is
+REM installed outside this folder except that shortcut and the task --
 REM see install.py --uninstall to remove them.
 setlocal
 cd /d "%~dp0"
@@ -39,7 +41,8 @@ set RC=%errorlevel%
 echo.
 if %RC%==0 (
   echo   Installed. Look for the Meridian icon on your desktop --
-  echo   it also starts automatically the next time you sign in.
+  echo   it starts automatically the next time you sign in, and keeps
+  echo   itself updated from GitHub with no further clicks.
 ) else (
   echo   Something went wrong installing the shortcut -- see above.
 )

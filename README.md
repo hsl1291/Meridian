@@ -296,7 +296,8 @@ copy **backward**, which is why the repo and branch are printed beside the butto
 rather than hidden in a constant.
 
 Restart the app afterwards; the running process is still the old code until you
-do, and the app says so rather than pretending otherwise.
+do, and the app says so rather than pretending otherwise. (A copy installed via
+`install.bat` restarts itself — see below.)
 
 ### Where the data lives
 
@@ -312,13 +313,30 @@ it resolved, and the script that builds it.
 
 Double-click **`install.bat`**. It sets up `.venv` if `start.bat` has not
 already been run, then adds a desktop shortcut that opens Meridian in its own
-window and starts the server automatically at logon — after that, the folder
-behaves like an installed app rather than something you run from a console.
+window, starts the server automatically at logon, and registers a task that
+re-invokes the launcher every 15 minutes — after that, the folder behaves like
+an installed app rather than something you run from a console.
+
+That 15-minute task does two things, both handled by `launch.py`:
+
+- **self-heal** — if the server isn't answering, it's restarted
+- **auto-update** — once every 24 hours (tracked via the `.version` file's own
+  timestamp, so this doesn't need a separate setting), it runs the exact same
+  update `apply()` the manual button uses. If anything changed, it reinstalls
+  dependencies if `requirements.txt` did, then restarts the server so the new
+  code actually takes effect — unlike the manual path above, nobody has to
+  come back and click restart.
+
+What it checks and how often is in `launch.py` (`UPDATE_CHECK_INTERVAL_HOURS`);
+what it did is logged to `logs\update.log`. Without the recurring task
+(`--no-task` below), the startup shortcut alone still checks once per sign-in
+— a machine left running for days between reboots just goes that many days
+between checks.
 
 ```bat
 install.bat                                      REM one click: sets up .venv, then the shortcut
-.venv\Scripts\python.exe install.py              REM shortcut + start at logon, without the setup step
-.venv\Scripts\python.exe install.py --task       REM + 15-min self-heal task
+.venv\Scripts\python.exe install.py              REM shortcut + start at logon + auto-update, without the setup step
+.venv\Scripts\python.exe install.py --no-task    REM shortcut + start at logon, but skip the recurring task
 .venv\Scripts\python.exe install.py --uninstall  REM remove them; data untouched
 ```
 

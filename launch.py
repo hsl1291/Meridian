@@ -1,11 +1,19 @@
-"""Launcher — health-check, self-heal, log-rotate, open the app window.
-Plain Python: no PowerShell, no wscript/.vbs. Shared across the apps; the
-CONFIG block below is the only per-app difference.
+"""Launcher — health-check, self-heal, auto-update, log-rotate, open the app
+window. Plain Python: no PowerShell, no wscript/.vbs. Shared across the apps;
+the CONFIG block below is the only per-app difference.
 
 Invoked directly by the desktop shortcut via venv\\Scripts\\pythonw.exe, so this
 process has no console attached — guard prints accordingly (handled below).
 
 --server-only: ensure the server is running but don't open a browser window.
+
+Every invocation checks whether an update from GitHub is due -- at most once
+per UPDATE_CHECK_INTERVAL_HOURS, tracked via .version's own mtime, so this is
+a no-op network-wise on all but roughly one call a day even though the
+"Meridian Server" scheduled task (registered by install.py by default) invokes
+this every 15 minutes. When an update actually applies, the running server is
+restarted so the new code takes effect -- updating the files on disk does
+nothing to a process that already loaded the old ones into memory.
 """
 import os
 import re
@@ -48,6 +56,13 @@ def _find_python() -> Path:
 
 PYTHON = _find_python()
 LOG_DIR = ROOT / "logs"
+UPDATE_LOG = LOG_DIR / "update.log"
+# Written by backend.updater.apply() on every run that reaches GitHub
+# successfully (whether or not anything actually changed), so its mtime is
+# already the right signal for "when did we last check" -- no separate stamp
+# file to keep in sync with it.
+VERSION_STAMP = ROOT / ".version"
+UPDATE_CHECK_INTERVAL_HOURS = 24
 
 CREATE_NO_WINDOW = 0x08000000
 # NOT DETACHED_PROCESS: Windows *ignores* CREATE_NO_WINDOW when DETACHED_PROCESS
@@ -131,6 +146,69 @@ def start_server() -> None:
             break
 
 
+def _log_update(msg: str) -> None:
+    try:
+        LOG_DIR.mkdir(exist_ok=True)
+        with open(UPDATE_LOG, "a", encoding="utf-8") as f:
+            f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  {msg}\n")
+    except OSError:
+        pass
+
+
+def _update_due() -> bool:
+    try:
+        age = time.time() - VERSION_STAMP.stat().st_mtime
+        return age >= UPDATE_CHECK_INTERVAL_HOURS * 3600
+    except OSError:
+        return True  # no stamp yet -- this copy has never checked
+
+
+def check_for_update() -> bool:
+    """Pull an update from GitHub if one is due, applying it in place via the
+    same backend.updater.apply() the in-app "Check for updates" button and
+    update.bat use. Returns True when files actually changed, which means the
+    running server (if any) is stale and must be restarted for the new code
+    to take effect -- writing new files does nothing to a process that
+    already has the old ones loaded into memory."""
+    if not _update_due():
+        return False
+    sys.path.insert(0, str(ROOT))
+    try:
+        from backend.updater import apply
+    except ImportError as e:
+        _log_update(f"updater unavailable: {e}")
+        return False
+
+    r = apply()
+    if not r.get("ok"):
+        _log_update(f"check failed: {r.get('error')}")
+        return False
+    if not r.get("updated"):
+        return False  # apply() still wrote .version, so this is rate-limited again either way
+
+    _log_update(f"applied {r['changed_count']} file(s) from {r.get('from_sha')} "
+               f"to {r.get('to_sha')}" + (", config merged" if r.get("merged") else ""))
+
+    # requirements.txt may have changed; reuse start.py's own idempotent
+    # installer (it stamps requirements.txt and skips the reinstall when it
+    # hasn't changed) rather than duplicating pip logic here. creationflags is
+    # Windows-only -- this app only ever runs launch.py there, but a bare
+    # ValueError from a kwarg irrelevant to what's being fixed is not the
+    # failure anyone auto-updating should see, so it's conditional rather
+    # than assumed like the rest of this Windows-only file.
+    extra = {"creationflags": CREATE_NO_WINDOW} if os.name == "nt" else {}
+    setup = subprocess.run(
+        [str(PYTHON), str(ROOT / "start.py"), "--setup-only"],
+        cwd=str(ROOT), capture_output=True, text=True, **extra,
+    )
+    if setup.returncode != 0:
+        _log_update("dependency setup after update failed: "
+                   + (setup.stderr or setup.stdout or "").strip()[:400])
+        # Still restart below -- new code visibly failing to start beats old
+        # code silently keeping running with nobody the wiser.
+    return True
+
+
 def open_window() -> None:
     edge_paths = [
         Path(os.environ.get("ProgramFiles(x86)", "")) / "Microsoft/Edge/Application/msedge.exe",
@@ -145,7 +223,8 @@ def open_window() -> None:
 
 def main() -> int:
     server_only = "--server-only" in sys.argv
-    if not is_healthy():
+    updated = check_for_update()
+    if updated or not is_healthy():
         start_server()
     if not server_only:
         open_window()

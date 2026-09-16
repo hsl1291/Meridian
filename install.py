@@ -1,12 +1,20 @@
 r"""Meridian — install / re-install the launcher wiring on this machine.
 
-OPTIONAL. Meridian runs from its own folder via start.bat; this only adds a
-desktop shortcut and starts it at logon for people who want that.
+OPTIONAL. Meridian runs from its own folder via start.bat; this adds a desktop
+shortcut, starts it at logon, and keeps it updated from GitHub automatically.
 
     install.bat                                     double-click: sets up .venv, then this
-    .venv\Scripts\python.exe install.py             desktop shortcut + auto-start at logon
-    .venv\Scripts\python.exe install.py --task      also register a task that re-checks every 15 min
+    .venv\Scripts\python.exe install.py             shortcut + auto-start at logon + auto-update
+    .venv\Scripts\python.exe install.py --no-task   shortcut + auto-start, but no recurring
+                                                     re-check — updates only apply once per logon
     .venv\Scripts\python.exe install.py --uninstall remove the shortcuts and the task
+
+The scheduled task re-invokes launch.py every 15 minutes. Most of those runs
+are a no-op: launch.py only actually reaches GitHub once every 24 hours (see
+UPDATE_CHECK_INTERVAL_HOURS there), and only restarts the server if that check
+found something to install or the server was down. Without the task, the
+startup shortcut still checks once per sign-in -- --no-task just means a
+machine left running for days goes that many days between checks.
 
 Meridian replaces two earlier apps — Sitefolio (the map) and Prospect (the
 tables) — so install also clears their desktop and startup shortcuts and their
@@ -14,7 +22,8 @@ scheduled task. Their folders and data are left alone; only the wiring that
 would start them, or put a second icon on the desktop, is removed.
 
 The app is self-contained: launch.py health-checks over HTTP and only restarts
-when the server is actually down, so running it repeatedly is safe.
+when the server is actually down or an update just applied, so running it
+repeatedly is safe.
 
 No PowerShell anywhere. Shortcuts are created through the shell's IShellLink COM
 interface via ctypes (stdlib only — this app does not ship pywin32), and the
@@ -227,14 +236,17 @@ def install(with_task: bool) -> int:
     create_shortcut(startup_lnk, PYTHONW, f'"{LAUNCH}" --server-only',
                     "Meridian server (background)", ICON)
 
-    # 3. Optional: a task that re-checks every 15 minutes. Runs as the current
-    #    user, so it needs no elevation.
+    # 3. A task that re-invokes launch.py every 15 minutes -- self-heal (restart
+    #    a crashed server) and the once-a-day auto-update check both ride on
+    #    it. Runs as the current user, so it needs no elevation. Skippable
+    #    with --no-task for anyone who wants no recurring task on this
+    #    machine; the startup shortcut alone still checks once per sign-in.
     if with_task:
         r = _schtasks("/Create", "/TN", TASK_NAME,
                       "/TR", f'"{PYTHONW}" "{LAUNCH}" --server-only',
                       "/SC", "MINUTE", "/MO", "15", "/F")
         if r.returncode == 0:
-            print(f"  + scheduled task '{TASK_NAME}' (re-checks every 15 min)")
+            print(f"  + scheduled task '{TASK_NAME}' (self-heal + daily auto-update check)")
         else:
             print(f"  ! could not register the task: {(r.stderr or r.stdout).strip()}")
             print("    The logon shortcut is installed, so the app still starts at sign-in.")
@@ -257,4 +269,4 @@ def install(with_task: bool) -> int:
 if __name__ == "__main__":
     if "--uninstall" in sys.argv:
         sys.exit(uninstall())
-    sys.exit(install(with_task="--task" in sys.argv))
+    sys.exit(install(with_task="--no-task" not in sys.argv))
