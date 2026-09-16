@@ -259,6 +259,7 @@ def gather(group_key: str, con: sqlite3.Connection,
         comps.sort(key=lambda r: r["distance_mi"])
         comps = comps[:12]
         # Recorded-sale medians per comp building, last 5 years.
+        this_year = date.today().year
         for c in comps:
             rows = con.execute(
                 "SELECT sale_yr1, sale_prc1, tot_lvg_area FROM nal_condo_unit "

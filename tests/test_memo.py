@@ -148,6 +148,41 @@ def test_what_it_could_not_confirm_is_printed_at_the_top(memo):
     assert "could not confirm" in head
 
 
+# ── nearby comps ────────────────────────────────────────────────────────────
+
+def test_gathering_a_building_with_a_nearby_comp_does_not_raise():
+    """gather() used an undefined `this_year` inside the per-comp sale-median
+    loop -- invisible in the module-scoped `memo` fixture above because that
+    building has no OTHER target row within range, so the comps list is
+    always empty and the loop body never runs. A second target close enough
+    to land in the radius, with at least one priced unit, exercises it."""
+    from datetime import date
+
+    from memo_fixture import memo_db
+
+    con = memo_db()
+    other = "0132071"
+    con.execute(
+        "INSERT INTO target (group_key, condo_name, addr_primary, city, units_nal, "
+        "act_yr_blt, lon, lat) VALUES (?,?,?,?,?,?,?,?)",
+        (other, "Nearby Towers Condominium", "1210 OCEAN DR", "MIAMI BEACH", 20,
+         1980, -80.1305, 25.7895))  # a few hundred feet from the main fixture building
+    for i in range(3):
+        con.execute(
+            "INSERT INTO nal_condo_unit (folio, group_key, owner_norm, owner_addr_norm, "
+            "tot_lvg_area, sale_prc1, sale_yr1, is_entity, is_absentee, county) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (f"{other}{i:06d}", other, f"OWNER {i}", f"{i} ELM ST",
+             900, 380_000 + i * 10_000, date.today().year - 1, 0, 0, "DADE"))
+    con.commit()
+
+    doc = gather(KEY, con)  # must not raise NameError
+    comps = [c for c in doc["comps"] if c["group_key"] == other]
+    assert comps, "the nearby target did not land in the comp radius"
+    assert comps[0]["sale_n"] == 3
+    assert comps[0]["sale_median"] == pytest.approx(390_000)
+
+
 # ── the server-side chart ──────────────────────────────────────────────────
 
 def test_the_sparkline_no_longer_lies_about_its_slopes():
