@@ -365,6 +365,11 @@ def selftest():
               ("target_snapshot", "scripts/prospect/build_targets.py")]
     try:
         con = db()
+    except _sq.OperationalError as exc:
+        add("database connection", False, str(exc),
+            "see the shared store check above")
+        return out
+    try:
         for t, fix in tables:
             try:
                 n = con.execute(f"SELECT COUNT(*) FROM {t}").fetchone()[0]
@@ -374,10 +379,8 @@ def selftest():
                     fix, rows=n)
             except _sq.OperationalError:
                 add(f"table {t}", False, "table does not exist", fix, rows=0)
+    finally:
         con.close()
-    except _sq.OperationalError as exc:
-        add("database connection", False, str(exc),
-            "see the shared store check above")
     return out
 
 
@@ -1139,10 +1142,13 @@ def capacity(
 
 @router.get("/api/acquisitions/health")
 def health():
+    con = None
     try:
         con = db()
         n = con.execute("SELECT COUNT(*) FROM target").fetchone()[0]
-        con.close()
         return {"ok": True, "targets": n}
     except Exception as exc:  # noqa: BLE001
         return JSONResponse({"ok": False, "error": str(exc)}, status_code=500)
+    finally:
+        if con is not None:
+            con.close()
