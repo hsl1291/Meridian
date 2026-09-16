@@ -101,7 +101,12 @@ class Buyout:
 
     def as_dict(self) -> dict:
         d = {k: getattr(self, k) for k in self.__dataclass_fields__}
-        d["basis_summary"] = basis_summary(self.basis_mix, self.units_valued)
+        # units_to_acquire, not units_valued: basis_mix also carries a "none"
+        # bucket for the unvalued units, so units_valued alone excludes them
+        # from the denominator while their count still sits in the numerator
+        # sum -- every basis's percentage came out too high, and "none" came
+        # out measured against the wrong population entirely.
+        d["basis_summary"] = basis_summary(self.basis_mix, self.units_to_acquire)
         return d
 
 

@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from backend.prospect.economics import basis_summary, estimate  # noqa: E402
+from backend.prospect.economics import Buyout, basis_summary, estimate  # noqa: E402
 
 YEAR = date.today().year
 
@@ -195,6 +195,17 @@ def test_the_estimate_says_how_it_was_built():
     assert basis_summary({"comp_psf": 68, "nearby_psf": 22, "assessed_ratio": 10}, 100) \
         == "68% in-building comps, 22% nearby comps, 10% assessed value"
     assert basis_summary({}, 0) is None
+
+
+def test_basis_summary_is_measured_against_every_unit_not_just_the_priced_ones():
+    """as_dict() used to pass units_valued as the denominator even though
+    basis_mix also carries a "none" bucket counted OUTSIDE units_valued --
+    6 valued + 4 unvalued read back as "100% in-building comps, 67% not
+    valued" (each on its own, wrong, denominator) instead of 60%/40% of the
+    10 units actually being priced."""
+    b = Buyout(group_key="0101010", units_to_acquire=10, units_valued=6,
+              basis_mix={"comp_psf": 6, "none": 4})
+    assert b.as_dict()["basis_summary"] == "60% in-building comps, 40% not valued"
 
 
 def test_every_estimate_carries_the_limits_it_cannot_see():
