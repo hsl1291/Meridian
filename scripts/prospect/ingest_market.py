@@ -148,9 +148,18 @@ def do_pop(con, force):
 
 # ── IRS migration ──────────────────────────────────────────────────────────
 def _irs(con, key, direction):
-    """IRS county files: y1_* is the origin, y2_* the destination for inflow;
-    reversed for outflow. Rows where the state code is 96/97/98 are US/region
-    aggregates, not counties, and are dropped."""
+    """IRS county files: y1_* is ALWAYS the geographic origin and y2_* ALWAYS
+    the geographic destination, in both the inflow and outflow files -- that
+    part never reverses (confirmed against the IRS SOI migration data user's
+    guide). What flips between the two files is which one is THIS row's
+    subject county: in the inflow file that's the destination (y2, the county
+    people moved INTO); in the outflow file it's the origin (y1, the county
+    people moved OUT OF). migration_flow.dest_fips stores the subject county
+    either way -- see the "column-name trap" flows.py and its docstring warn
+    about -- which is why the (dest, orig) tuple below assigns (b, a) for "in"
+    but (a, b), not (b, a), for "out": y1 (a) IS the subject there.
+    Rows where the state code is 96/97/98 are US/region aggregates, not
+    counties, and are dropped."""
     path = fetch(key, False)
     rows = []
     with open(path, encoding="latin-1", newline="") as fh:
@@ -254,7 +263,11 @@ def do_zhvi(con, force):
     for r in con.execute("SELECT DISTINCT cbsa, cbsa_name FROM county"):
         lookup[norm(r["cbsa_name"])] = r["cbsa"]
         a = anchor(r["cbsa_name"])
-        # Ambiguous anchors are dropped rather than guessed at.
+        # Ambiguous anchors are dropped rather than guessed at. This stays
+        # correctly "sticky": once a collision sets a value to None, None
+        # can never equal a later cbsa string, so the condition below keeps
+        # re-selecting the None branch for every further collision on the
+        # same anchor rather than reverting to whichever one showed up last.
         anchors[a] = None if a in anchors and anchors[a] != r["cbsa"] else r["cbsa"]
 
     rows, matched, unmatched = [], set(), 0

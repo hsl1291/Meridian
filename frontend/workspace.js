@@ -32,6 +32,14 @@
   let marketsLoaded = false;
   let refLoaded = false;
 
+  // #t-detail is the one shared drawer for both a building (openDrawer) and a
+  // metro (openMarket). Bumped by whichever opens; every async render into it
+  // or one of its sub-panels captures the value at its own start and checks it
+  // again after its own fetch resolves, so a slower response for whatever was
+  // open a moment ago can never overwrite a newer selection -- a different
+  // building, a different metro, or one replacing the other.
+  let detailToken = 0;
+
   function setMode(next) {
     if (next === mode) return;
     mode = next;
@@ -262,12 +270,14 @@
   function closeDrawer() {
     el('t-drawer').hidden = true;
     el('t-scrim').hidden = true;
+    detailToken++;   // any fetch still in flight for the closed selection is now stale
   }
   el('t-close').addEventListener('click', closeDrawer);
   el('t-scrim').addEventListener('click', closeDrawer);
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeDrawer(); });
 
   async function openDrawer(key) {
+    const myToken = ++detailToken;
     const box = el('t-detail');
     el('t-drawer').hidden = false;
     el('t-scrim').hidden = false;
@@ -276,7 +286,8 @@
 
     let d;
     try { d = await fetchJSON('/api/target/' + encodeURIComponent(key)); }
-    catch (e) { box.innerHTML = '<p class="msg">Could not load this building.</p>'; return; }
+    catch (e) { if (detailToken === myToken) box.innerHTML = '<p class="msg">Could not load this building.</p>'; return; }
+    if (detailToken !== myToken) return;   // a newer selection replaced this one while we waited
     const t = d.target;
     const g = d.group;
 
@@ -588,11 +599,13 @@
   // every time a new roll lands, and losing where a deal had got to because the
   // data refreshed would be the worst bug in this app.
   async function loadDeal(key) {
+    const myToken = detailToken;
     const box = el('t-deal');
     if (!box) return;
     let d;
     try { d = await fetchJSON(`/api/target/${encodeURIComponent(key)}/deal`); }
-    catch (e) { box.innerHTML = ''; return; }
+    catch (e) { if (detailToken === myToken) box.innerHTML = ''; return; }
+    if (detailToken !== myToken) return;
     const opts = d.stages.map((st) =>
       `<option value="${esc(st)}"${st === d.stage ? ' selected' : ''}>${esc(st)}</option>`).join('');
     box.innerHTML = `
@@ -624,11 +637,13 @@
                       unknown: 'Unclassified' };
 
   async function loadDeclarations(key) {
+    const myToken = detailToken;
     const box = el('t-docs');
     if (!box) return;
     let d;
     try { d = await fetchJSON(`/api/target/${encodeURIComponent(key)}/declarations`); }
-    catch (e) { box.innerHTML = ''; return; }
+    catch (e) { if (detailToken === myToken) box.innerHTML = ''; return; }
+    if (detailToken !== myToken) return;
     if (!d.documents.length) {
       box.innerHTML = `<div class="note">No declaration has been read for this building.
         Everything below is unverified until one is.</div>`;
@@ -705,11 +720,13 @@
   // One buyer behind several LLCs. top_owner_pct counts units under one owner
   // NAME, which an assembler defeats by holding each unit in its own entity.
   async function loadBeneficial(key) {
+    const myToken = detailToken;
     const box = el('t-benef');
     if (!box) return;
     let b;
     try { b = await fetchJSON(`/api/target/${encodeURIComponent(key)}/beneficial`); }
-    catch (e) { box.innerHTML = ''; return; }
+    catch (e) { if (detailToken === myToken) box.innerHTML = ''; return; }
+    if (detailToken !== myToken) return;
     const top = b.groups && b.groups[0];
     if (!top || top.member_count < 2) {
       box.innerHTML = `<div class="note">No owner here holds units under more than one name.
@@ -756,11 +773,13 @@
   }
 
   async function loadEconomics(key) {
+    const myToken = detailToken;
     const box = el('t-econ');
     if (!box) return;
     let e;
     try { e = await fetchJSON(`/api/economics/${encodeURIComponent(key)}`, { timeoutMs: 30000 }); }
-    catch (err) { box.innerHTML = '<p class="msg">Buyout estimate unavailable.</p>'; return; }
+    catch (err) { if (detailToken === myToken) box.innerHTML = '<p class="msg">Buyout estimate unavailable.</p>'; return; }
+    if (detailToken !== myToken) return;
     if (e.cost_at_fmv == null) {
       box.innerHTML = `<div class="note warn">${esc(e.caveats[0] || 'Nothing here could be priced.')}</div>`;
       return;
@@ -786,10 +805,12 @@
   }
 
   async function loadComps(key) {
+    const myToken = detailToken;
     const box = el('t-comps');
     let c;
     try { c = await fetchJSON(`/api/condo-comps?group_key=${encodeURIComponent(key)}`, { timeoutMs: 30000 }); }
-    catch (e) { box.innerHTML = '<p class="msg">Comps unavailable.</p>'; return; }
+    catch (e) { if (detailToken === myToken) box.innerHTML = '<p class="msg">Comps unavailable.</p>'; return; }
+    if (detailToken !== myToken) return;
     const s = c.summary;
 
     const inRows = c.in_building.slice(0, 12).map((r) => `<tr>
@@ -852,13 +873,18 @@
   }
 
   function wireCapacity(key) {
+    const openToken = detailToken;   // this drawer's own selection, at wiring time
+    let capSeq = 0;   // guards against the user re-clicking Analyze (or Enter)
+                      // before the previous lookup for THIS same building returned
     const box = el('t-cap');
     const run = async () => {
+      const mySeq = ++capSeq;
       const sf = parseFloat(el('t-lot').value) || null;
       box.innerHTML = '<p class="msg">Analyzing…</p>';
       let d;
       try { d = await fetchJSON(`/api/capacity?group_key=${encodeURIComponent(key)}${sf ? '&lot_sf=' + sf : ''}`, { timeoutMs: 30000 }); }
-      catch (e) { box.innerHTML = '<p class="msg">Capacity lookup failed.</p>'; return; }
+      catch (e) { if (detailToken === openToken && capSeq === mySeq) box.innerHTML = '<p class="msg">Capacity lookup failed.</p>'; return; }
+      if (detailToken !== openToken || capSeq !== mySeq) return;
       if (!d.resolved) {
         box.innerHTML = `<div class="note">No zoning polygon covers this point — ${esc(d.reason || 'unresolved')}.</div>`;
         return;
@@ -958,9 +984,12 @@
     h.hidden = false;
   }
 
+  let ddSeq = 0;   // the Enter-key path isn't blocked by btn.disabled, so two
+                   // searches for different text can still overlap
   async function ddSearch() {
     const q = el('dd-q').value.trim();
     if (q.length < 2) { hideHits(); return; }
+    const mySeq = ++ddSeq;
     const btn = el('dd-go');
     btn.disabled = true;
     btn.textContent = 'Finding…';
@@ -968,12 +997,13 @@
     try {
       r = await fetchJSON('/api/dd/resolve?q=' + encodeURIComponent(q));
     } catch (e) {
-      showHits('<p class="msg">Could not reach the market index.</p>');
+      if (ddSeq === mySeq) showHits('<p class="msg">Could not reach the market index.</p>');
       return;
     } finally {
       btn.disabled = false;
       btn.textContent = 'Build report';
     }
+    if (ddSeq !== mySeq) return;   // a newer search superseded this one
 
     if (!r.count) {
       showHits(`<p class="msg">No metro matches “${esc(q)}”. Try a city and state —
@@ -1078,11 +1108,13 @@
   // ingest and has never been shown anywhere, so until now the app could say a
   // metro lost 67,418 people domestically and not where a single one went.
   async function drawFlows(cbsa) {
+    const myToken = detailToken;
     const box = el('m-flows');
     if (!box) return;
     let f;
     try { f = await fetchJSON(`/api/flows/${encodeURIComponent(cbsa)}?limit=8`, { timeoutMs: 30000 }); }
-    catch (e) { box.innerHTML = '<p class="msg">Corridor data unavailable.</p>'; return; }
+    catch (e) { if (detailToken === myToken) box.innerHTML = '<p class="msg">Corridor data unavailable.</p>'; return; }
+    if (detailToken !== myToken) return;
     const t = f.totals;
     const rows = [...f.gaining_from, ...f.losing_to]
       .sort((a, b) => b.net_returns - a.net_returns)
@@ -1111,11 +1143,13 @@
   // migration -- and a stacked area cannot show a negative component without
   // lying about the total. Positives above zero, negatives below it.
   async function drawComponents(cbsa) {
+    const myToken = detailToken;
     const box = el('m-components');
     if (!box) return;
     let dd;
     try { dd = await fetchJSON('/api/dd/' + encodeURIComponent(cbsa), { timeoutMs: 30000 }); }
-    catch (e) { box.innerHTML = '<p class="msg">Component series unavailable.</p>'; return; }
+    catch (e) { if (detailToken === myToken) box.innerHTML = '<p class="msg">Component series unavailable.</p>'; return; }
+    if (detailToken !== myToken) return;
     const years = (dd.pop_years || []).slice(1);   // first year has no change
     if (!years.length || !window.Charts) { box.innerHTML = '<p class="msg">No component series for this metro.</p>'; return; }
     box.innerHTML = Charts.divergingBars(
@@ -1133,11 +1167,13 @@
   // points by anything would bury the one the reader came for.
   let ALL_METROS = null;
   async function drawTightness(cbsa) {
+    const myToken = detailToken;
     const box = el('m-scatter');
     if (!box) return;
     try {
       if (!ALL_METROS) ALL_METROS = (await fetchJSON('/api/metros?limit=1000&min_pop=0&metro_only=true')).rows;
-    } catch (e) { box.innerHTML = '<p class="msg">Metro set unavailable.</p>'; return; }
+    } catch (e) { if (detailToken === myToken) box.innerHTML = '<p class="msg">Metro set unavailable.</p>'; return; }
+    if (detailToken !== myToken) return;
     const pts = ALL_METROS
       .filter((r) => r.permits_per_1k != null && r.net_mig_total_rate != null)
       .map((r) => ({ x: r.permits_per_1k, y: r.net_mig_total_rate,
@@ -1153,6 +1189,7 @@
   }
 
   async function openMarket(cbsa) {
+    const myToken = ++detailToken;
     const box = el('t-detail');
     el('t-drawer').hidden = false;
     el('t-scrim').hidden = false;
@@ -1165,7 +1202,8 @@
         fetchJSON('/api/metro/' + encodeURIComponent(cbsa)),
         fetchJSON('/api/naics'),
       ]);
-    } catch (e) { box.innerHTML = '<p class="msg">Could not load this market.</p>'; return; }
+    } catch (e) { if (detailToken === myToken) box.innerHTML = '<p class="msg">Could not load this market.</p>'; return; }
+    if (detailToken !== myToken) return;   // a newer selection replaced this one while we waited
     const m = d.market;
 
     const cells = [
