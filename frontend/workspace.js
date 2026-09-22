@@ -118,7 +118,7 @@
     try {
       r = await fetchJSON('/api/targets?' + tParams({ limit: PAGE, offset: tOffset, sort: el('t-sort').value }));
     } catch (e) {
-      body.innerHTML = '<tr><td colspan="8" class="ws-empty">Could not load targets.</td></tr>';
+      body.innerHTML = `<tr><td colspan="8" class="ws-empty">${failMsg('Could not load targets', e)}</td></tr>`;
       return;
     }
     tTotal = r.total;
@@ -286,7 +286,7 @@
 
     let d;
     try { d = await fetchJSON('/api/target/' + encodeURIComponent(key)); }
-    catch (e) { if (detailToken === myToken) box.innerHTML = '<p class="msg">Could not load this building.</p>'; return; }
+    catch (e) { if (detailToken === myToken) box.innerHTML = `<p class="msg">${failMsg('Could not load this building', e)}</p>`; return; }
     if (detailToken !== myToken) return;   // a newer selection replaced this one while we waited
     const t = d.target;
     const g = d.group;
@@ -418,21 +418,23 @@
     if (t.termination_threshold) el('f-thr').value = t.termination_threshold;
     el('t-save').addEventListener('click', async () => {
       const kv = el('f-kauf').value;
-      const res = await fetch(`/api/target/${encodeURIComponent(key)}/stage2`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          termination_threshold: el('f-thr').value || null,
-          kaufman_original: kv ? kv === 'orig' : null,
-          kaufman_by_amendment: kv ? kv === 'amend' : null,
-          declaration_or_book: el('f-book').value || null,
-          declaration_or_page: el('f-page').value || null,
-          declaration_source_url: el('f-url').value || null,
-          stage2_verified: el('f-ver').checked,
-          stage2_notes: el('f-notes').value || null,
-        }),
-      });
-      el('t-save-msg').textContent = res.ok ? 'Saved.' : 'Save failed.';
-      if (res.ok) loadTargets();
+      try {
+        await fetchJSON(`/api/target/${encodeURIComponent(key)}/stage2`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            termination_threshold: el('f-thr').value || null,
+            kaufman_original: kv ? kv === 'orig' : null,
+            kaufman_by_amendment: kv ? kv === 'amend' : null,
+            declaration_or_book: el('f-book').value || null,
+            declaration_or_page: el('f-page').value || null,
+            declaration_source_url: el('f-url').value || null,
+            stage2_verified: el('f-ver').checked,
+            stage2_notes: el('f-notes').value || null,
+          }),
+        });
+      } catch (e) { el('t-save-msg').textContent = `Not saved — ${errReason(e)}`; return; }
+      el('t-save-msg').textContent = 'Saved.';
+      loadTargets();
     });
 
     loadComps(key);
@@ -459,7 +461,7 @@
       box.innerHTML = '<p class="msg">Comparing vintages…</p>';
       let d;
       try { d = await fetchJSON('/api/movement?limit=10', { timeoutMs: 30000 }); }
-      catch (e) { moveLoaded = false; box.innerHTML = '<p class="msg">Movement unavailable.</p>'; return; }
+      catch (e) { moveLoaded = false; box.innerHTML = `<p class="msg">${failMsg('Movement unavailable', e)}</p>`; return; }
       if (!d.comparable) { box.innerHTML = `<div class="note">${esc(d.note)}</div>`; return; }
 
       const rows = (list) => list.map((t) => `<tr data-k="${esc(t.group_key)}">
@@ -530,7 +532,7 @@
       updateStatus = await fetchJSON('/api/update/check', { timeoutMs: 30000 });
       renderUpdate(updateStatus);
     } catch (e) {
-      el('update-body').innerHTML = '<div class="note warn">Could not reach the update service.</div>';
+      el('update-body').innerHTML = `<div class="note warn">${failMsg('Could not check for updates', e)}</div>`;
     } finally { btn.disabled = false; }
   }
 
@@ -587,7 +589,7 @@
             ${d.backup ? `<tr><td class="dim">Backup</td><td class="mono">.backup/${esc(d.backup.split(/[\\/]/).pop())}</td></tr>` : ''}
           </tbody></table>`;
       } catch (e) {
-        msg.textContent = 'Could not reach the update service.';
+        msg.textContent = `Update did not finish — ${errReason(e)}`;
       } finally {
         apply.disabled = check.disabled = false;
       }
@@ -604,7 +606,7 @@
     if (!box) return;
     let d;
     try { d = await fetchJSON(`/api/target/${encodeURIComponent(key)}/deal`); }
-    catch (e) { if (detailToken === myToken) box.innerHTML = ''; return; }
+    catch (e) { if (detailToken === myToken) box.innerHTML = `<p class="msg">${failMsg('Deal status unavailable', e)}</p>`; return; }
     if (detailToken !== myToken) return;
     const opts = d.stages.map((st) =>
       `<option value="${esc(st)}"${st === d.stage ? ' selected' : ''}>${esc(st)}</option>`).join('');
@@ -621,12 +623,14 @@
              <td>${esc(n.body)}</td></tr>`).join('')}</tbody></table>` : ''}`;
 
     el('d-save').addEventListener('click', async () => {
-      const res = await fetch(`/api/target/${encodeURIComponent(key)}/deal`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ stage: el('d-stage').value, note: el('d-note').value || null }),
-      });
-      el('d-msg').textContent = res.ok ? 'Saved.' : 'Save failed.';
-      if (res.ok) loadDeal(key);
+      try {
+        await fetchJSON(`/api/target/${encodeURIComponent(key)}/deal`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ stage: el('d-stage').value, note: el('d-note').value || null }),
+        });
+      } catch (e) { el('d-msg').textContent = `Not saved — ${errReason(e)}`; return; }
+      el('d-msg').textContent = 'Saved.';
+      loadDeal(key);
     });
   }
 
@@ -642,7 +646,7 @@
     if (!box) return;
     let d;
     try { d = await fetchJSON(`/api/target/${encodeURIComponent(key)}/declarations`); }
-    catch (e) { if (detailToken === myToken) box.innerHTML = ''; return; }
+    catch (e) { if (detailToken === myToken) box.innerHTML = `<p class="msg">${failMsg('Declarations unavailable', e)}</p>`; return; }
     if (detailToken !== myToken) return;
     if (!d.documents.length) {
       box.innerHTML = `<div class="note">No declaration has been read for this building.
@@ -697,7 +701,7 @@
         res = await fetch(`/api/target/${encodeURIComponent(key)}/declaration`,
                           { method: 'POST', body });
         data = await res.json();
-      } catch (e) { msg.textContent = 'Upload failed.'; return; }
+      } catch (e) { msg.textContent = `Upload failed — ${res && !res.ok ? `the server answered HTTP ${res.status}` : errReason(e)}`; return; }
       input.value = '';
       if (!res.ok) { msg.textContent = data.detail || 'Could not read that PDF.'; return; }
       const d = data.document;
@@ -725,7 +729,7 @@
     if (!box) return;
     let b;
     try { b = await fetchJSON(`/api/target/${encodeURIComponent(key)}/beneficial`); }
-    catch (e) { if (detailToken === myToken) box.innerHTML = ''; return; }
+    catch (e) { if (detailToken === myToken) box.innerHTML = `<p class="msg">${failMsg('Ownership lookup unavailable', e)}</p>`; return; }
     if (detailToken !== myToken) return;
     const top = b.groups && b.groups[0];
     if (!top || top.member_count < 2) {
@@ -778,7 +782,7 @@
     if (!box) return;
     let e;
     try { e = await fetchJSON(`/api/economics/${encodeURIComponent(key)}`, { timeoutMs: 30000 }); }
-    catch (err) { if (detailToken === myToken) box.innerHTML = '<p class="msg">Buyout estimate unavailable.</p>'; return; }
+    catch (err) { if (detailToken === myToken) box.innerHTML = `<p class="msg">${failMsg('Buyout estimate unavailable', err)}</p>`; return; }
     if (detailToken !== myToken) return;
     if (e.cost_at_fmv == null) {
       box.innerHTML = `<div class="note warn">${esc(e.caveats[0] || 'Nothing here could be priced.')}</div>`;
@@ -809,7 +813,7 @@
     const box = el('t-comps');
     let c;
     try { c = await fetchJSON(`/api/condo-comps?group_key=${encodeURIComponent(key)}`, { timeoutMs: 30000 }); }
-    catch (e) { if (detailToken === myToken) box.innerHTML = '<p class="msg">Comps unavailable.</p>'; return; }
+    catch (e) { if (detailToken === myToken) box.innerHTML = `<p class="msg">${failMsg('Comps unavailable', e)}</p>`; return; }
     if (detailToken !== myToken) return;
     const s = c.summary;
 
@@ -883,7 +887,7 @@
       box.innerHTML = '<p class="msg">Analyzing…</p>';
       let d;
       try { d = await fetchJSON(`/api/capacity?group_key=${encodeURIComponent(key)}${sf ? '&lot_sf=' + sf : ''}`, { timeoutMs: 30000 }); }
-      catch (e) { if (detailToken === openToken && capSeq === mySeq) box.innerHTML = '<p class="msg">Capacity lookup failed.</p>'; return; }
+      catch (e) { if (detailToken === openToken && capSeq === mySeq) box.innerHTML = `<p class="msg">${failMsg('Capacity lookup failed', e)}</p>`; return; }
       if (detailToken !== openToken || capSeq !== mySeq) return;
       if (!d.resolved) {
         box.innerHTML = `<div class="note">No zoning polygon covers this point — ${esc(d.reason || 'unresolved')}.</div>`;
@@ -933,7 +937,7 @@
     body.innerHTML = '<tr><td colspan="10" class="ws-empty">Loading…</td></tr>';
     let r;
     try { r = await fetchJSON('/api/metros?' + mParams()); }
-    catch (e) { body.innerHTML = '<tr><td colspan="10" class="ws-empty">Could not load markets.</td></tr>'; return; }
+    catch (e) { body.innerHTML = `<tr><td colspan="10" class="ws-empty">${failMsg('Could not load markets', e)}</td></tr>`; return; }
     mTotal = r.total;
     HOME = HOME || r.home;
     body.innerHTML = r.rows.map((m) => `<tr data-c="${esc(m.cbsa)}">
@@ -997,7 +1001,7 @@
     try {
       r = await fetchJSON('/api/dd/resolve?q=' + encodeURIComponent(q));
     } catch (e) {
-      if (ddSeq === mySeq) showHits('<p class="msg">Could not reach the market index.</p>');
+      if (ddSeq === mySeq) showHits(`<p class="msg">${failMsg('Could not search the market index', e)}</p>`);
       return;
     } finally {
       btn.disabled = false;
@@ -1076,7 +1080,7 @@
       box.innerHTML = '<p class="msg">Reading 109,000 flows…</p>';
       let f;
       try { f = await fetchJSON('/api/flows/national?limit=12&min_pop=250000', { timeoutMs: 60000 }); }
-      catch (e) { flowsLoaded = false; box.innerHTML = '<p class="msg">National flows unavailable.</p>'; return; }
+      catch (e) { flowsLoaded = false; box.innerHTML = `<p class="msg">${failMsg('National flows unavailable', e)}</p>`; return; }
 
       const table = (rows, valueLabel, value) => `<table class="mini">
         <thead><tr><th>Metro</th><th class="n">${valueLabel}</th><th class="n">Arrivals' AGI</th></tr></thead>
@@ -1113,7 +1117,7 @@
     if (!box) return;
     let f;
     try { f = await fetchJSON(`/api/flows/${encodeURIComponent(cbsa)}?limit=8`, { timeoutMs: 30000 }); }
-    catch (e) { if (detailToken === myToken) box.innerHTML = '<p class="msg">Corridor data unavailable.</p>'; return; }
+    catch (e) { if (detailToken === myToken) box.innerHTML = `<p class="msg">${failMsg('Corridor data unavailable', e)}</p>`; return; }
     if (detailToken !== myToken) return;
     const t = f.totals;
     const rows = [...f.gaining_from, ...f.losing_to]
@@ -1148,7 +1152,7 @@
     if (!box) return;
     let dd;
     try { dd = await fetchJSON('/api/dd/' + encodeURIComponent(cbsa), { timeoutMs: 30000 }); }
-    catch (e) { if (detailToken === myToken) box.innerHTML = '<p class="msg">Component series unavailable.</p>'; return; }
+    catch (e) { if (detailToken === myToken) box.innerHTML = `<p class="msg">${failMsg('Component series unavailable', e)}</p>`; return; }
     if (detailToken !== myToken) return;
     const years = (dd.pop_years || []).slice(1);   // first year has no change
     if (!years.length || !window.Charts) { box.innerHTML = '<p class="msg">No component series for this metro.</p>'; return; }
@@ -1172,7 +1176,7 @@
     if (!box) return;
     try {
       if (!ALL_METROS) ALL_METROS = (await fetchJSON('/api/metros?limit=1000&min_pop=0&metro_only=true')).rows;
-    } catch (e) { if (detailToken === myToken) box.innerHTML = '<p class="msg">Metro set unavailable.</p>'; return; }
+    } catch (e) { if (detailToken === myToken) box.innerHTML = `<p class="msg">${failMsg('Metro set unavailable', e)}</p>`; return; }
     if (detailToken !== myToken) return;
     const pts = ALL_METROS
       .filter((r) => r.permits_per_1k != null && r.net_mig_total_rate != null)
@@ -1202,7 +1206,7 @@
         fetchJSON('/api/metro/' + encodeURIComponent(cbsa)),
         fetchJSON('/api/naics'),
       ]);
-    } catch (e) { if (detailToken === myToken) box.innerHTML = '<p class="msg">Could not load this market.</p>'; return; }
+    } catch (e) { if (detailToken === myToken) box.innerHTML = `<p class="msg">${failMsg('Could not load this market', e)}</p>`; return; }
     if (detailToken !== myToken) return;   // a newer selection replaced this one while we waited
     const m = d.market;
 
@@ -1286,15 +1290,16 @@
     drawFlows(cbsa);
 
     el('j-run').addEventListener('click', async () => {
-      const r = await fetch('/api/jobs-impact', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          cbsa, naics: el('j-naics').value, jobs: +el('j-jobs').value,
-          avg_pay: el('j-pay').value ? +el('j-pay').value : null,
-        }),
-      });
-      if (!r.ok) { el('j-out').innerHTML = '<div class="note warn">Could not estimate.</div>'; return; }
-      const j = await r.json();
+      let j;
+      try {
+        j = await fetchJSON('/api/jobs-impact', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            cbsa, naics: el('j-naics').value, jobs: +el('j-jobs').value,
+            avg_pay: el('j-pay').value ? +el('j-pay').value : null,
+          }),
+        });
+      } catch (e) { el('j-out').innerHTML = `<div class="note warn">${failMsg('Could not estimate', e)}</div>`; return; }
       el('j-out').innerHTML = `<div class="cells">
         <div><b>${fmt(j.direct_jobs)}</b><span>Direct jobs</span></div>
         <div><b>${fmt(j.induced_jobs)}</b><span>Induced (×${j.multiplier})</span></div>

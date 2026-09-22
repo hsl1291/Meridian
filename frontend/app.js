@@ -390,11 +390,46 @@ async function fetchJSON(url, opts = {}) {
     let msg = `HTTP ${r.status}`;
     try {
       const b = await r.json();
-      if (b && b.detail) msg = typeof b.detail === 'string' ? b.detail : JSON.stringify(b.detail);
+      if (b && b.detail) {
+        // FastAPI's 422 detail is a list of {loc, msg}; show "field: problem"
+        // rather than a blob of JSON.
+        msg = typeof b.detail === 'string' ? b.detail
+          : Array.isArray(b.detail) ? b.detail.map((d) => {
+              const loc = Array.isArray(d && d.loc) ? d.loc.filter((x) => x !== 'body').join('.') : '';
+              return (loc ? loc + ': ' : '') + ((d && d.msg) || JSON.stringify(d));
+            }).join('; ')
+          : JSON.stringify(b.detail);
+      }
     } catch (e) { /* non-JSON error body */ }
-    throw new Error(msg);
+    const err = new Error(msg);
+    err.status = r.status;
+    throw err;
   }
   return r.json();
+}
+
+// Why a fetchJSON call failed, in words a user can act on. The server's own
+// `detail` (e.g. "The shared store could not be opened at ... set
+// APPS_SHARED_DB") is what fetchJSON puts in e.message, and it is far more
+// useful than "Could not load targets." on its own -- which is all the
+// panels used to show, leaving the one piece of information that said what
+// to fix sitting unread in the network tab.
+function errReason(e) {
+  if (!e) return 'unknown error';
+  if (e.name === 'TimeoutError' || e.name === 'AbortError') return 'the server took too long to answer';
+  // fetch() rejects with a TypeError ("Failed to fetch") when nothing answers
+  // at all. Some layers (transit) go straight to a third-party service, so
+  // this can't claim which end is down.
+  if (e.name === 'TypeError') return 'no response — is Meridian still running, and is this machine online?';
+  if (e.status >= 500 && /^HTTP \d+$/.test(e.message)) {
+    return `the server hit an error (${e.message}) -- details in logs\\server.err.log`;
+  }
+  return String(e.message || e);
+}
+
+// "<what> -- <why>", HTML-escaped, for dropping straight into innerHTML.
+function failMsg(what, e) {
+  return esc(`${what} — ${errReason(e)}`);
 }
 
 // ---------- owner / connected-party search (FL: Sunbiz + parcels) ----------
@@ -1382,7 +1417,7 @@ async function loadTrends() {
     trendsData = await fetchJSON('/api/metro-trends', { timeoutMs: 45000 });
   } catch (e) {
     if (note) {
-      note.textContent = 'Metro trends unavailable — run scripts/fetch_cbsa_geo.py.';
+      note.textContent = `Metro trends unavailable — ${errReason(e)}`;
       note.hidden = false;
     }
     return null;
@@ -1528,7 +1563,7 @@ async function refreshPopGrowth() {
     recolorPop();
   } catch (e) {
     if (e.name === 'AbortError') return;   // superseded — the new fetch owns the UI
-    if (seq === popSeq && note) { note.textContent = 'Population layer unavailable here.'; note.hidden = false; }
+    if (seq === popSeq && note) { note.textContent = `Population layer unavailable — ${errReason(e)}`; note.hidden = false; }
   }
 }
 
@@ -1671,7 +1706,7 @@ async function refreshRents() {
     }
   } catch (e) {
     if (e.name === 'AbortError') return;   // superseded — the new fetch owns the UI
-    if (seq === rentsSeq && note) { note.textContent = 'Rent layer unavailable here.'; note.hidden = false; }
+    if (seq === rentsSeq && note) { note.textContent = `Rent layer unavailable — ${errReason(e)}`; note.hidden = false; }
   }
 }
 
@@ -1803,7 +1838,7 @@ async function refreshParcelFabric() {
   } catch (e) {
     if (e.name === 'AbortError') return;   // superseded — the new fetch owns the UI
     parcelLoadedBox = null;
-    if (seq === parcelFabricSeq && note) { note.textContent = 'Parcel lines unavailable.'; note.hidden = false; }
+    if (seq === parcelFabricSeq && note) { note.textContent = `Parcel lines unavailable — ${errReason(e)}`; note.hidden = false; }
   }
 }
 
@@ -2098,7 +2133,7 @@ async function refreshPermitHeat() {
     }
   } catch (e) {
     if (e.name === 'AbortError') return;   // superseded — the new fetch owns the UI
-    if (seq === permitHeatSeq && note) { note.textContent = 'Permit heat unavailable here.'; note.hidden = false; }
+    if (seq === permitHeatSeq && note) { note.textContent = `Permit heat unavailable — ${errReason(e)}`; note.hidden = false; }
   }
 }
 
@@ -2187,7 +2222,7 @@ async function refreshMetroZoning() {
     }
   } catch (e) {
     if (e.name === 'AbortError') return;   // superseded — the new fetch owns the UI
-    if (seq === metroZoningSeq && note) { note.textContent = 'Zoning load failed.'; note.hidden = false; }
+    if (seq === metroZoningSeq && note) { note.textContent = `Zoning load failed — ${errReason(e)}`; note.hidden = false; }
   }
 }
 
@@ -2313,7 +2348,7 @@ async function refreshTransitRoutes(seq, signal) {
     updateTransitNote();
   } catch (e) {
     if (e.name === 'AbortError') return;   // superseded — the new fetch owns the UI
-    if (seq === transitSeq) updateTransitNote('Transit route load failed.');
+    if (seq === transitSeq) updateTransitNote(`Transit route load failed — ${errReason(e)}`);
   }
 }
 async function refreshTransitStops(seq, signal) {
@@ -2339,7 +2374,7 @@ async function refreshTransitStops(seq, signal) {
     updateTransitNote();
   } catch (e) {
     if (e.name === 'AbortError') return;   // superseded — the new fetch owns the UI
-    if (seq === transitSeq) updateTransitNote('Transit stop load failed.');
+    if (seq === transitSeq) updateTransitNote(`Transit stop load failed — ${errReason(e)}`);
   }
 }
 
@@ -2394,7 +2429,7 @@ async function refreshNationalFlood() {
     if (note) { const n = (gj.features || []).length; note.textContent = n ? `${n} FEMA flood polygons in view` : 'No mapped flood zones here.'; note.hidden = false; }
   } catch (e) {
     if (e.name === 'AbortError') return;   // superseded — the new fetch owns the UI
-    if (seq === floodSeq && note) { note.textContent = 'Flood load failed.'; note.hidden = false; }
+    if (seq === floodSeq && note) { note.textContent = `Flood load failed — ${errReason(e)}`; note.hidden = false; }
   }
 }
 
