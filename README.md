@@ -400,6 +400,8 @@ frontend/
   workspace.js      modes, condo takeovers, markets, drawers
   styles.css        panel + type system
   shell.css         frame, workspace, drawer
+  vendor/           MapLibre GL 4.7.1 (BSD-3, licence alongside) -- served
+                    locally so a blocked or slow CDN can't blank the map
 scripts/
   fetch_layers.py  fetch_zori.py  fetch_zcta_population.py  make_icon.py
   prospect/        the ingest + scoring pipeline
