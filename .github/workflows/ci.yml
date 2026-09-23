@@ -29,3 +29,43 @@ jobs:
         with:
           node-version: "22"
       - run: node --test "tests/js/*.test.js"
+
+  # The installer and launcher are Windows-only (IShellLink via ctypes,
+  # schtasks, pythonw) and nothing on ubuntu-latest exercises them. This job
+  # runs the whole suite on Windows -- including tests/test_install_windows.py,
+  # which round-trips a real .lnk -- and then does what a user does: runs
+  # install.bat, with an older install on the machine for it to migrate from.
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest tests/ -q
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: node --test "tests/js/*.test.js"
+
+      - name: Fake an older install to migrate from
+        run: python tests\ci_windows_install.py setup
+      - name: install.bat, as a double-click runs it
+        shell: cmd
+        run: install.bat < nul
+      - name: Verify the install
+        shell: cmd
+        run: .venv\Scripts\python.exe tests\ci_windows_install.py verify
+      - name: Server logs
+        if: always()
+        shell: cmd
+        run: |
+          if exist logs\server.err.log type logs\server.err.log
+          if exist logs\server.log type logs\server.log
+      - name: Uninstall
+        if: always()
+        shell: cmd
+        run: .venv\Scripts\python.exe install.py --uninstall
