@@ -8,6 +8,15 @@ shortcut, starts it at logon, and keeps it updated from GitHub automatically.
     .venv\Scripts\python.exe install.py --no-task   shortcut + auto-start, but no recurring
                                                      re-check — updates only apply once per logon
     .venv\Scripts\python.exe install.py --uninstall remove the shortcuts and the task
+    .venv\Scripts\python.exe install.py --import-from "C:\old\Meridian"
+                                                     bring that folder's data\ in
+                                                     (normally found automatically)
+
+A fresh download has an empty data\ folder. If an earlier install is found --
+through the shortcuts and scheduled task it left behind, read BEFORE this
+install replaces them -- its data\ is copied in first: databases, declarations,
+memos and the shared store. Nothing here is overwritten and the old folder is
+not touched; see backend/data_import.py for the rules.
 
 The scheduled task re-invokes launch.py every 15 minutes. Most of those runs
 are a no-op: launch.py only actually reaches GitHub once every 24 hours (see
@@ -33,6 +42,9 @@ needed.
 from __future__ import annotations
 
 import ctypes
+import html
+import json
+import re
 import subprocess
 import sys
 import urllib.request
@@ -41,6 +53,10 @@ from ctypes.wintypes import BOOL, DWORD, HANDLE, HWND, LPCWSTR, LPWSTR
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))
+from backend import data_import  # noqa: E402  (stdlib only)
+
+
 def _pythonw() -> Path:
     """Prefer .venv (what start.py builds), then the older hand-made venv. Both
     live inside the app folder, so a shortcut points at the downloaded copy
@@ -59,7 +75,7 @@ ICON = ROOT / "frontend" / "static" / "favicon.ico"
 APP_NAME = "Meridian"
 TASK_NAME = "Meridian Server"
 PORT = 8012
-HEALTH_URL = f"http://127.0.0.1:{PORT}/api/shared/status"
+HEALTH_URL = f"http://127.0.0.1:{PORT}/api/instance"
 
 # Wiring this install replaces: (desktop shortcut, startup shortcut, task).
 #
@@ -103,7 +119,9 @@ IID_IPersistFile = GUID("{0000010B-0000-0000-C000-000000000046}")
 QUERY_INTERFACE, RELEASE = 0, 2
 SL_SET_DESCRIPTION, SL_SET_WORKING_DIR = 7, 9
 SL_SET_ARGUMENTS, SL_SET_ICON, SL_SET_PATH = 11, 17, 20
-PF_SAVE = 6
+SL_GET_PATH, SL_GET_WORKING_DIR, SL_GET_ARGUMENTS = 3, 8, 10
+PF_LOAD, PF_SAVE = 5, 6
+STGM_READ = 0
 
 
 def _invoke(ptr: c_void_p, slot: int, *arg_pairs):
@@ -157,6 +175,83 @@ def create_shortcut(path: Path, target: Path, arguments: str = "",
         print(f"  + {path}")
     else:
         print(f"  ! shortcut did not persist: {path}")
+
+
+def read_shortcut(path: Path) -> dict:
+    """(working dir, target, arguments) of an existing .lnk, or {} if it
+    can't be read. Used only to find an earlier install's folder."""
+    ole32.CoInitialize(None)
+    link = c_void_p()
+    out: dict = {}
+    try:
+        ole32.CoCreateInstance(byref(CLSID_ShellLink), None, CLSCTX_INPROC_SERVER,
+                               byref(IID_IShellLinkW), byref(link))
+    except OSError:
+        return out
+    try:
+        persist = c_void_p()
+        _invoke(link, QUERY_INTERFACE,
+                (POINTER(GUID), byref(IID_IPersistFile)),
+                (POINTER(c_void_p), byref(persist)))
+        try:
+            _invoke(persist, PF_LOAD, (LPCWSTR, str(path)), (DWORD, STGM_READ))
+        finally:
+            _invoke(persist, RELEASE)
+        for key, slot, extra in (("working_dir", SL_GET_WORKING_DIR, ()),
+                                 ("arguments", SL_GET_ARGUMENTS, ()),
+                                 ("target", SL_GET_PATH, ((c_void_p, None), (DWORD, 0)))):
+            buf = ctypes.create_unicode_buffer(1024)
+            try:
+                _invoke(link, slot, (LPWSTR, buf), (c_int, len(buf)), *extra)
+                out[key] = buf.value
+            except OSError:
+                pass
+    except OSError:
+        pass
+    finally:
+        _invoke(link, RELEASE)
+    return out
+
+
+def _task_command(name: str) -> dict:
+    """The command line a scheduled task runs, from schtasks' XML export."""
+    r = _schtasks("/Query", "/TN", name, "/XML")
+    if r.returncode != 0:
+        return {}
+    cmd = re.search(r"<Command>(.*?)</Command>", r.stdout, re.S)
+    args = re.search(r"<Arguments>(.*?)</Arguments>", r.stdout, re.S)
+    return {"target": html.unescape(cmd.group(1)).strip('"') if cmd else "",
+            "arguments": html.unescape(args.group(1)) if args else ""}
+
+
+def find_previous_installs() -> list[Path]:
+    """Folders of earlier installs, likeliest first: this app's own wiring,
+    then the name it had before (Groundwork), then the two apps it replaced.
+    Must run before clear_superseded() and create_shortcut() -- those delete
+    and overwrite exactly the files this reads."""
+    desktop, startup = _desktop(), known_folder(CSIDL_STARTUP)
+    wiring = [(f"{APP_NAME}.lnk", f"{APP_NAME} (server).lnk", TASK_NAME), *SUPERSEDED]
+    refs: list[dict] = []
+    for desk_lnk, start_lnk, task in wiring:
+        for p in (desktop / desk_lnk, startup / start_lnk):
+            if p.exists():
+                refs.append(read_shortcut(p))
+        refs.append(_task_command(task))
+    candidates = [root for ref in refs for root in data_import.root_from_launch_ref(**ref)]
+    return data_import.previous_installs(candidates, ROOT)
+
+
+def import_previous_data(sources: list[Path]) -> None:
+    if not sources:
+        print("  (no earlier install found -- starting with an empty data folder)")
+        return
+    for src in sources:
+        print(f"  from {src}")
+        r = data_import.import_data(src, ROOT)
+        n = len(r["copied"]) + len(r["replaced"])
+        print(f"    {n} file(s) brought over"
+              + (f", {len(r['kept'])} already here and left alone" if r["kept"] else "")
+              + (f", {len(r['failed'])} could not be copied (listed above)" if r["failed"] else ""))
 
 
 # ── install steps ───────────────────────────────────────────────────────────
@@ -215,13 +310,22 @@ def uninstall() -> int:
     return 0
 
 
-def install(with_task: bool) -> int:
+def install(with_task: bool, import_from: Path | None = None) -> int:
     if not PYTHONW.exists():
         print(f"ERROR: {PYTHONW} not found.")
         print("Run start.py once first — it creates .venv inside this folder.")
         return 1
 
-    print(f"Clearing the wiring for the apps {APP_NAME} replaces...")
+    # Read the old wiring before anything below deletes or overwrites it.
+    print("Looking for data from an earlier install...")
+    try:
+        sources = [import_from] if import_from else find_previous_installs()
+        import_previous_data(sources)
+    except Exception as e:   # never let this block the install itself
+        print(f"  ! data import skipped: {e}")
+        print("    Run install.py --import-from <old folder> to retry.")
+
+    print(f"\nClearing the wiring for the apps {APP_NAME} replaces...")
     clear_superseded()
 
     print(f"\nInstalling {APP_NAME} launcher wiring...")
@@ -254,19 +358,36 @@ def install(with_task: bool) -> int:
     print("\nStarting the server...")
     subprocess.run([str(PYTHONW), str(LAUNCH), "--server-only"], cwd=str(ROOT))
 
+    # Ask WHICH folder is serving: an older install still holding the port
+    # also answers 200, and reporting that as success is how a new install
+    # ends up running old code.
+    serving = None
     try:
         with urllib.request.urlopen(HEALTH_URL, timeout=10) as r:
-            up = r.status == 200
+            serving = json.loads(r.read().decode("utf-8")).get("root")
     except Exception:
-        up = False
-    if up:
+        pass
+    if serving and data_import.same_folder(serving, ROOT):
         print(f"Running at http://127.0.0.1:{PORT}")
+        return 0
+    if serving:
+        print(f"WARNING: port {PORT} is held by another copy at {serving}")
     else:
         print(rf"WARNING: server did not come up -- check {ROOT}\logs\server.err.log")
-    return 0
+    return 1
 
 
 if __name__ == "__main__":
     if "--uninstall" in sys.argv:
         sys.exit(uninstall())
-    sys.exit(install(with_task="--no-task" not in sys.argv))
+    src = None
+    if "--import-from" in sys.argv:
+        i = sys.argv.index("--import-from")
+        if i + 1 >= len(sys.argv):
+            sys.exit("--import-from needs the old folder's path")
+        src = Path(sys.argv[i + 1])
+        if not (src / "data").is_dir():
+            sys.exit(f"{src} has no data folder")
+        if data_import.same_folder(src, ROOT):
+            sys.exit("--import-from must name the OLD folder, not this one")
+    sys.exit(install(with_task="--no-task" not in sys.argv, import_from=src))

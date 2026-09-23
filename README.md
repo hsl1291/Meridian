@@ -327,6 +327,24 @@ That 15-minute task does two things, both handled by `launch.py`:
   code actually takes effect — unlike the manual path above, nobody has to
   come back and click restart.
 
+**Your data comes with you.** A fresh download has an empty `data\` folder, so
+before it touches anything else `install.py` looks for an earlier install —
+through the shortcuts and scheduled task it left behind (Meridian, Groundwork,
+Prospect, Sitefolio) — and copies that folder's `data\` in: scored targets,
+deal stages, declarations, memos and the shared store. Nothing already in the
+new folder is overwritten (except a database with no rows in it at all), the
+old folder is only read, and databases are copied through SQLite's backup API,
+so it is safe while the old server is still running. If it can't find the old
+folder, point it there yourself:
+`.venv\Scripts\python.exe install.py --import-from "C:\path\to\old\Meridian"`.
+
+It then takes over port 8012 from the old copy if that is still running —
+the launcher checks *which folder* is answering (`/api/instance`), not just that
+something is, so the new icon never opens old code.
+
+A **git clone** is never auto-updated (that would overwrite the working tree
+from a zip); `git pull` instead, or set `MERIDIAN_AUTO_UPDATE=1` to opt in.
+
 What it checks and how often is in `launch.py` (`UPDATE_CHECK_INTERVAL_HOURS`);
 what it did is logged to `logs\update.log`. Without the recurring task
 (`--no-task` below), the startup shortcut alone still checks once per sign-in
@@ -334,10 +352,11 @@ what it did is logged to `logs\update.log`. Without the recurring task
 between checks.
 
 ```bat
-install.bat                                      REM one click: sets up .venv, then the shortcut
+install.bat                                      REM one click: sets up .venv, imports old data, then the shortcut
 .venv\Scripts\python.exe install.py              REM shortcut + start at logon + auto-update, without the setup step
 .venv\Scripts\python.exe install.py --no-task    REM shortcut + start at logon, but skip the recurring task
 .venv\Scripts\python.exe install.py --uninstall  REM remove them; data untouched
+.venv\Scripts\python.exe install.py --import-from "C:\old\Meridian"  REM bring that folder's data in
 ```
 
 `install.py` also clears the desktop shortcuts, startup shortcuts and scheduled

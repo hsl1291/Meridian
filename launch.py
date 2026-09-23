@@ -15,6 +15,7 @@ this every 15 minutes. When an update actually applies, the running server is
 restarted so the new code takes effect -- updating the files on disk does
 nothing to a process that already loaded the old ones into memory.
 """
+import json
 import os
 import re
 import subprocess
@@ -33,7 +34,7 @@ PORT = 8012
 UVICORN_MODULE = "backend.app:app"
 APP_DIR_ARG = None
 WINDOW_TITLE = "Meridian"
-HEALTH_PATH = "api/shared/status"
+HEALTH_PATH = "api/instance"
 # --------------------------------
 
 ROOT = Path(__file__).resolve().parent
@@ -73,12 +74,31 @@ CREATE_NO_WINDOW = 0x08000000
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 
 
+def _same_folder(a, b) -> bool:
+    return (os.path.normcase(os.path.realpath(str(a)))
+            == os.path.normcase(os.path.realpath(str(b))))
+
+
 def is_healthy() -> bool:
+    """True only when THIS folder's server is the one answering on PORT.
+
+    "Something answers on 8012" is not enough. Installing a new copy while an
+    older one is still running (it starts at logon, so it usually is) left
+    the old server holding the port: this check passed, nothing restarted,
+    and the new desktop icon opened the OLD folder's code until the next
+    reboot. /api/instance names the folder it is serving from; anything
+    else on the port -- another copy, or one too old to have the route --
+    counts as down, and start_server() clears the port before starting.
+    """
     try:
         with urllib.request.urlopen(HEALTH_URL, timeout=3) as r:
-            return r.status == 200
+            if r.status != 200:
+                return False
+            info = json.loads(r.read().decode("utf-8"))
     except Exception:
         return False
+    root = info.get("root") if isinstance(info, dict) else None
+    return bool(root) and _same_folder(root, ROOT)
 
 
 def rotate_log(path: Path) -> None:
@@ -155,7 +175,17 @@ def _log_update(msg: str) -> None:
         pass
 
 
+def _is_git_checkout() -> bool:
+    """A clone is updated with git, not by overwriting its working tree from a
+    zip -- that would leave every updated file showing as a local change and
+    silently discard uncommitted edits' context. MERIDIAN_AUTO_UPDATE=1
+    opts a clone back in (the Windows CI job does, to exercise the path)."""
+    return (ROOT / ".git").exists() and os.environ.get("MERIDIAN_AUTO_UPDATE") != "1"
+
+
 def _update_due() -> bool:
+    if _is_git_checkout():
+        return False
     try:
         age = time.time() - VERSION_STAMP.stat().st_mtime
         return age >= UPDATE_CHECK_INTERVAL_HOURS * 3600

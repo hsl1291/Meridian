@@ -44,7 +44,7 @@ if %RC%==0 (
   echo   it starts automatically the next time you sign in, and keeps
   echo   itself updated from GitHub with no further clicks.
 ) else (
-  echo   Something went wrong installing the shortcut -- see above.
+  echo   Meridian is installed but did not start cleanly -- see above.
 )
 echo.
 pause

@@ -243,6 +243,8 @@ def test_nothing_user_facing_still_says_the_old_name():
         "install.py",                # removes the old shortcut and logon task
         "README.md",                 # explains that it does
         "tests/test_start.py",       # this test
+        "tests/test_data_import.py",     # an old Groundwork folder is a real import source
+        "tests/test_install_windows.py", # ... and so is its shortcut
     }
     exts = {".py", ".js", ".html", ".css", ".md", ".json", ".bat", ".sh", ".command", ".yml"}
     skip = {".git", ".venv", "venv", "__pycache__", ".pytest_cache", ".backup", "node_modules"}

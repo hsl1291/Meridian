@@ -167,3 +167,70 @@ def test_main_does_not_restart_when_nothing_changed_and_server_is_healthy(launch
     monkeypatch.setattr(launch, "start_server", lambda: started.append(1))
     launch.main()
     assert not started
+
+
+# ── a git clone updates with git, not by being overwritten from a zip ──────
+
+def test_update_is_never_due_in_a_git_checkout(launch, monkeypatch):
+    monkeypatch.delenv("MERIDIAN_AUTO_UPDATE", raising=False)
+    (launch.ROOT / ".git").mkdir()
+    assert launch._update_due() is False
+
+
+def test_a_git_checkout_can_opt_back_in(launch, monkeypatch):
+    (launch.ROOT / ".git").mkdir()
+    monkeypatch.setenv("MERIDIAN_AUTO_UPDATE", "1")
+    assert launch._update_due() is True
+
+
+# ── is_healthy: only THIS folder's server counts ────────────────────────────
+
+def _serve(payload, status=200):
+    """A throwaway HTTP server answering every GET with `payload`."""
+    import http.server
+    import json as _json
+    import threading
+
+    class H(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = _json.dumps(payload).encode()
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *a):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), H)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return srv
+
+
+@pytest.mark.parametrize("who, expected", [
+    ("this", True),
+    ("other", False),   # an older install still holding the port
+    ("none", False),    # too old to have /api/instance's root field
+])
+def test_is_healthy_only_for_this_folders_server(launch, monkeypatch, tmp_path, who, expected):
+    other = tmp_path.parent / (tmp_path.name + "-old-install")
+    payload = {"app": "Meridian", "pid": 1,
+               **({"root": str(launch.ROOT)} if who == "this" else
+                  {"root": str(other)} if who == "other" else {})}
+    srv = _serve(payload)
+    try:
+        monkeypatch.setattr(launch, "HEALTH_URL",
+                            f"http://127.0.0.1:{srv.server_port}/api/instance")
+        assert launch.is_healthy() is expected
+    finally:
+        srv.shutdown()
+
+
+def test_is_healthy_is_false_when_nothing_answers(launch, monkeypatch):
+    monkeypatch.setattr(launch, "HEALTH_URL", "http://127.0.0.1:9/api/instance")
+    assert launch.is_healthy() is False
+
+
+def test_the_health_check_asks_which_folder_is_serving():
+    src = (ROOT / "launch.py").read_text(encoding="utf-8")
+    assert 'HEALTH_PATH = "api/instance"' in src
