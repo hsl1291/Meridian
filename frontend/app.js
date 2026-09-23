@@ -303,7 +303,14 @@ function taxBillLink(county, parcelId) {
 // ---------- Sunbiz owner-entity lookup ----------
 const ENTITY_RX = /\b(LLC|L\.?L\.?C|INC|CORP|CO|LTD|LP|LLLP|LLP|PLLC|TRUST|HOLDINGS|PARTNERS|GROUP|PROPERTIES|INVESTMENTS|REALTY|VENTURES|CAPITAL|ENTERPRISES|ASSOCIATES)\b/i;
 
+// Its own counter as well as lookupSeq: a click on an entity in the party
+// panel calls this with no seq, so two quick clicks raced and the SLOWER
+// answer won the panel -- showing one entity's officers under another's name.
+let entitySeq = 0;
+
 async function loadEntity(owner, state, seq) {
+  const mine = ++entitySeq;
+  const stale = () => mine !== entitySeq || (seq != null && seq !== lookupSeq);
   const panel = document.getElementById('entity-panel');
   const body = document.getElementById('entity-body');
   panel.hidden = false;
@@ -313,14 +320,14 @@ async function loadEntity(owner, state, seq) {
   try {
     const qs = `name=${encodeURIComponent(owner)}${state ? '&state=' + state : ''}`;
     const e = await fetchJSON(`/api/entity?${qs}`, { timeoutMs: 20000 });
-    if (seq != null && seq !== lookupSeq) return;  // stale — a newer parcel lookup owns the panel
+    if (stale()) return;  // a newer lookup (parcel or entity) owns the panel
     if (e.found) { body.innerHTML = renderEntity(e); return; }
     // Not found / needs key — still offer the free OpenCorporates deep link.
     let html = `<p style="color:var(--text-muted); font-size:12px">${esc(e.message || 'No structured match.')}</p>`;
     if (e.oc_url && safeUrl(e.oc_url)) html += `<div class="tax-link" style="margin-top:8px"><a href="${safeUrl(e.oc_url)}" target="_blank" rel="noopener">Search ${esc(owner)} on OpenCorporates →</a></div>`;
     body.innerHTML = html;
   } catch (err) {
-    if (seq != null && seq !== lookupSeq) return;
+    if (stale()) return;
     body.innerHTML = `<p style="color:var(--danger); font-size:12px">Entity lookup failed: ${esc(err.message)}</p>`;
   }
 }
@@ -436,7 +443,14 @@ function failMsg(what, e) {
 // Pivot from any name (person or LLC) to: every entity it's an officer/agent of,
 // and every parcel it owns. Clicking an entity walks the graph; clicking a
 // property flies there and pulls its record.
+// Pivoting walks the graph by clicking names, so overlapping searches are the
+// normal case, and the two fetches below take up to 25-40s. Without this the
+// slower search won: one name's properties and entities rendered under
+// another's heading, with its pins on the map.
+let partySeq = 0;
+
 async function searchParty(name, state) {
+  const mine = ++partySeq;
   const st = state || currentPlaceState || 'FL';
   const panel = document.getElementById('party-panel');
   const body = document.getElementById('party-body');
@@ -445,11 +459,12 @@ async function searchParty(name, state) {
   panel.hidden = false; panel.open = true;
   body.innerHTML = `<p style="color:var(--text-muted);font-size:12px">Searching <b>${esc(name)}</b> across ${st === 'FL' ? 'Sunbiz + FL property records' : esc(st) + ' registries'}…</p>`;
   panel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  const qs = `name=${encodeURIComponent(name)}&state=${st}`;
+  const qs = `name=${encodeURIComponent(name)}&state=${encodeURIComponent(st)}`;
   const [ents, owned] = await Promise.all([
     fetchJSON(`/api/related-entities?${qs}`, { timeoutMs: 25000 }).catch(() => ({})),
     (st === 'FL' ? fetchJSON(`/api/owner-properties?name=${encodeURIComponent(name)}`, { timeoutMs: 40000 }).catch(() => ({})) : Promise.resolve({})),
   ]);
+  if (mine !== partySeq) return;
   renderParty(name, st, ents, owned);
 }
 
@@ -633,6 +648,9 @@ async function loadPermits(arg, seq) {
 
 // ---------- deed / official-records (national, via NETROnline directory) ----------
 function recorderUrl(state, county) {
+  // Both come from upstream parcel data and land in an href unescaped by the
+  // callers, so reduce them to what a slug can contain.
+  state = String(state || '').replace(/[^A-Za-z]/g, '').toUpperCase();
   if (!state || !county) return null;
   const slug = String(county)
     .toLowerCase()
@@ -694,7 +712,8 @@ function toast(msg) {
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(t._timer);
-  t._timer = setTimeout(() => t.classList.remove('show'), 1800);
+  // Long enough to read: error toasts now carry the server's reason.
+  t._timer = setTimeout(() => t.classList.remove('show'), Math.min(8000, Math.max(1800, msg.length * 60)));
 }
 
 // ---------- layer wiring ----------
@@ -726,12 +745,12 @@ map.on('style.load', () => {
     paint: { 'line-color': '#3a4151', 'line-width': ['interpolate', ['linear'], ['zoom'], 10, 0.15, 15, 0.5], 'line-opacity': 0.45 } });
 
   // ---- Miami-Dade FLU
-  map.addSource('mdc_flu', { type: 'geojson', data: '/data/mdc_flu.geojson' });
+  addLazySource('mdc_flu', '/data/mdc_flu.geojson');
   map.addLayer({ id: 'mdc-flu-fill', type: 'fill', source: 'mdc_flu', layout: { visibility: 'none' },
     paint: { 'fill-color': '#7dd3fc', 'fill-opacity': 0.35 } });
 
   // ---- Broward BMSD Zoning (only unincorporated)
-  map.addSource('bro_zoning', { type: 'geojson', data: '/data/bro_zoning_bmsd.geojson' });
+  addLazySource('bro_zoning', '/data/bro_zoning_bmsd.geojson');
   map.addLayer({ id: 'bro-zoning-fill', type: 'fill', source: 'bro_zoning', layout: { visibility: 'none' },
     paint: {
       'fill-color': [
@@ -745,15 +764,15 @@ map.on('style.load', () => {
     paint: { 'line-color': '#3a4151', 'line-width': 0.3, 'line-opacity': 0.5 } });
 
   // ---- Broward FLU
-  map.addSource('bro_flu', { type: 'geojson', data: '/data/bro_flu.geojson' });
+  addLazySource('bro_flu', '/data/bro_flu.geojson');
   map.addLayer({ id: 'bro-flu-fill', type: 'fill', source: 'bro_flu', layout: { visibility: 'none' },
     paint: { 'fill-color': '#a7f3d0', 'fill-opacity': 0.4 } });
 
   // ---- Flood: combine Miami-Dade + Broward into 2 layers (different field names)
-  map.addSource('mdc_flood', { type: 'geojson', data: '/data/mdc_flood.geojson' });
+  addLazySource('mdc_flood', '/data/mdc_flood.geojson');
   map.addLayer({ id: 'mdc-flood-fill', type: 'fill', source: 'mdc_flood', layout: { visibility: 'none' },
     paint: { 'fill-color': floodColorExpression('FZONE'), 'fill-opacity': 0.5 } });
-  map.addSource('bro_flood', { type: 'geojson', data: '/data/bro_flood.geojson' });
+  addLazySource('bro_flood', '/data/bro_flood.geojson');
   map.addLayer({ id: 'bro-flood-fill', type: 'fill', source: 'bro_flood', layout: { visibility: 'none' },
     paint: { 'fill-color': floodColorExpression('FLD_ZONE'), 'fill-opacity': 0.5 } });
   // National FEMA flood (FEMA NFHL) — loaded by viewport so flood color works anywhere
@@ -764,34 +783,34 @@ map.on('style.load', () => {
     paint: { 'line-color': '#1e3a8a', 'line-width': 0.3, 'line-opacity': 0.4 } });
 
   // ---- Incentive overlays (MDC)
-  map.addSource('mdc_oz', { type: 'geojson', data: '/data/mdc_opportunity_zones.geojson' });
+  addLazySource('mdc_oz', '/data/mdc_opportunity_zones.geojson');
   map.addLayer({ id: 'oz-fill', type: 'fill', source: 'mdc_oz', layout: { visibility: 'none' },
     paint: { 'fill-color': '#facc15', 'fill-opacity': 0.28 } });
   map.addLayer({ id: 'oz-line', type: 'line', source: 'mdc_oz', layout: { visibility: 'none' },
     paint: { 'line-color': '#a16207', 'line-width': 1.2 } });
 
-  map.addSource('mdc_cra', { type: 'geojson', data: '/data/mdc_cra.geojson' });
+  addLazySource('mdc_cra', '/data/mdc_cra.geojson');
   map.addLayer({ id: 'cra-fill', type: 'fill', source: 'mdc_cra', layout: { visibility: 'none' },
     paint: { 'fill-color': '#a78bfa', 'fill-opacity': 0.3 } });
   map.addLayer({ id: 'cra-line', type: 'line', source: 'mdc_cra', layout: { visibility: 'none' },
     paint: { 'line-color': '#5b21b6', 'line-width': 1.2 } });
 
-  map.addSource('mdc_brownfield', { type: 'geojson', data: '/data/mdc_brownfields.geojson' });
+  addLazySource('mdc_brownfield', '/data/mdc_brownfields.geojson');
   map.addLayer({ id: 'brownfield-fill', type: 'fill', source: 'mdc_brownfield', layout: { visibility: 'none' },
     paint: { 'fill-color': '#f87171', 'fill-opacity': 0.35 } });
 
-  map.addSource('mdc_enterprise', { type: 'geojson', data: '/data/mdc_enterprise_zones.geojson' });
+  addLazySource('mdc_enterprise', '/data/mdc_enterprise_zones.geojson');
   map.addLayer({ id: 'enterprise-fill', type: 'fill', source: 'mdc_enterprise', layout: { visibility: 'none' },
     paint: { 'fill-color': '#34d399', 'fill-opacity': 0.25 } });
 
   // ---- Context
-  map.addSource('mdc_historic', { type: 'geojson', data: '/data/mdc_historic_districts.geojson' });
+  addLazySource('mdc_historic', '/data/mdc_historic_districts.geojson');
   map.addLayer({ id: 'historic-fill', type: 'fill', source: 'mdc_historic', layout: { visibility: 'none' },
     paint: { 'fill-color': '#d97706', 'fill-opacity': 0.25 } });
   map.addLayer({ id: 'historic-line', type: 'line', source: 'mdc_historic', layout: { visibility: 'none' },
     paint: { 'line-color': '#92400e', 'line-width': 1.5 } });
 
-  map.addSource('mdc_rtz', { type: 'geojson', data: '/data/mdc_rapid_transit_zones.geojson' });
+  addLazySource('mdc_rtz', '/data/mdc_rapid_transit_zones.geojson');
   map.addLayer({ id: 'rtz-fill', type: 'fill', source: 'mdc_rtz', layout: { visibility: 'none' },
     paint: { 'fill-color': '#10b981', 'fill-opacity': 0.2 } });
 
@@ -802,16 +821,16 @@ map.on('style.load', () => {
   map.addLayer({ id: 'metromover-pts', type: 'circle', source: 'mdc_metromover',
     paint: { 'circle-radius': 5, 'circle-color': '#f59e0b', 'circle-stroke-color': '#fff', 'circle-stroke-width': 1.5 } });
 
-  map.addSource('mdc_schools', { type: 'geojson', data: '/data/mdc_schools.geojson' });
+  addLazySource('mdc_schools', '/data/mdc_schools.geojson');
   map.addLayer({ id: 'schools-pts', type: 'circle', source: 'mdc_schools', layout: { visibility: 'none' },
     paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 2.5, 16, 6],
              'circle-color': '#0ea5e9', 'circle-stroke-color': '#fff', 'circle-stroke-width': 1 } });
-  map.addSource('mdc_parks', { type: 'geojson', data: '/data/mdc_parks.geojson' });
+  addLazySource('mdc_parks', '/data/mdc_parks.geojson');
   map.addLayer({ id: 'parks-fill', type: 'fill', source: 'mdc_parks', layout: { visibility: 'none' },
     paint: { 'fill-color': '#86efac', 'fill-opacity': 0.45 } });
 
   // ---- Modular / prefab factories (national, 329 plants), colored by category
-  map.addSource('factories', { type: 'geojson', data: '/data/modular_factories.geojson' });
+  addLazySource('factories', '/data/modular_factories.geojson');
   map.addLayer({
     id: 'factories-pts', type: 'circle', source: 'factories', layout: { visibility: 'none' },
     paint: {
@@ -906,10 +925,10 @@ map.on('style.load', () => {
     paint: { 'text-color': '#1e3a8a', 'text-halo-color': '#fff', 'text-halo-width': 1.3 } });
 
   // ---- Boundaries (kept invisible by default)
-  map.addSource('mdc_munis', { type: 'geojson', data: '/data/mdc_municipalities.geojson' });
+  addLazySource('mdc_munis', '/data/mdc_municipalities.geojson');
   map.addLayer({ id: 'mdc-munis-line', type: 'line', source: 'mdc_munis', layout: { visibility: 'none' },
     paint: { 'line-color': '#111', 'line-width': 1.4, 'line-opacity': 0.6 } });
-  map.addSource('bro_munis', { type: 'geojson', data: '/data/bro_municipalities.geojson' });
+  addLazySource('bro_munis', '/data/bro_municipalities.geojson');
   map.addLayer({ id: 'bro-munis-line', type: 'line', source: 'bro_munis', layout: { visibility: 'none' },
     paint: { 'line-color': '#111', 'line-width': 1.4, 'line-opacity': 0.6 } });
 
@@ -1299,8 +1318,29 @@ function wireAutoPlace() {
 function setVis(layers, on) {
   for (const id of layers) {
     if (!map.getLayer(id)) continue;
+    if (on) ensureLazySource(map.getLayer(id).source);
     map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
   }
+}
+
+// Static GeoJSON behind layers that start hidden. MapLibre downloads a source's
+// URL the moment the source is added, visible or not -- so every one of these
+// (both counties' flood zones, FLU, Broward zoning, schools, parks, ...) used
+// to download and parse at startup whether or not anyone ever switched it on.
+// They are now added empty and filled the first time a layer using them is
+// shown. setVis is the one path that shows them.
+const LAZY_SOURCES = {};   // source id -> url, until loaded
+
+function addLazySource(id, url) {
+  map.addSource(id, { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+  LAZY_SOURCES[id] = url;
+}
+
+function ensureLazySource(id) {
+  const url = LAZY_SOURCES[id];
+  if (!url) return;
+  delete LAZY_SOURCES[id];
+  map.getSource(id)?.setData(url);
 }
 
 function wireToggles() {
@@ -1453,6 +1493,9 @@ function wireTrends() {
     if (legend) legend.hidden = !cb.checked;
     if (!cb.checked) { setVis(TREND_LAYERS, false); return; }
     if (!(await loadTrends())) { cb.checked = trendsOn = false; return; }
+    // The first load can take many seconds; if it was switched off meanwhile,
+    // showing it now would leave a visible layer under an unchecked box.
+    if (!cb.checked) return;
     setVis(TREND_LAYERS, true);
   });
 
@@ -1648,7 +1691,10 @@ function recolorRents() {
     const v = f.properties.rent;
     let i = 0;
     while (i < breaks.length && v > breaks[i]) i++;
-    f.properties._c = RENT_RAMP[i];
+    // null > n is false, so a ZIP with no rent used to stop at bucket 0 and
+    // paint as the CHEAPEST in view. No value, no colour (the layer's coalesce
+    // renders it transparent).
+    f.properties._c = v == null ? null : RENT_RAMP[i];
     f.properties._lbl = v == null ? '' : '$' + Math.round(v / 10) * 10;
   }
   map.getSource('rents')?.setData(rentsFC);
@@ -1986,8 +2032,8 @@ function renderDevPanel() {
   const p = [];
 
   // header: zone (click-through to the governing code text) + site + controls
-  const zoneEl = z.code_url
-    ? `<a href="${esc(z.code_url)}" target="_blank" title="Open the governing zoning code for ${esc(z.zone || '')}"><b>${esc(z.zone || '?')}</b></a>`
+  const zoneEl = safeUrl(z.code_url)
+    ? `<a href="${safeUrl(z.code_url)}" target="_blank" rel="noopener" title="Open the governing zoning code for ${esc(z.zone || '')}"><b>${esc(z.zone || '?')}</b></a>`
     : `<b>${esc(z.zone || '?')}</b>`;
   p.push(`<div class="dev-zone">${zoneEl}${z.desc ? ' — ' + esc(z.desc) : ''}<span class="dev-mini"> · ${esc(z.muni || '')}</span></div>`);
   const inSite = devSite.some(pp => devSameParcel(pp, devCurrent));
@@ -2060,13 +2106,13 @@ function renderDevPanel() {
     p.push(`<details class="dev-more"><summary>Live Local requirements &amp; entitlements</summary><ul>` +
       (ll.requirements || []).map(r => `<li>${esc(r)}</li>`).join('') +
       (ll.entitlements || []).map(r => `<li style="color:var(--text-muted)">${esc(r)}</li>`).join('') +
-      `</ul>${ll.source_url ? `<a href="${esc(ll.source_url)}" target="_blank">statute ↗</a>` : ''}</details>`);
+      `</ul>${safeUrl(ll.source_url) ? `<a href="${safeUrl(ll.source_url)}" target="_blank" rel="noopener">statute ↗</a>` : ''}</details>`);
   }
 
   // citations, warnings, assumptions
   if (d.rulebook) {
     p.push(`<div class="dev-mini">Rulebook: ${esc(d.rulebook.code_name || d.rulebook.matched)}
-      ${d.rulebook.source_url ? `— <a href="${esc(d.rulebook.source_url)}" target="_blank">code ↗</a>` : ''}</div>`);
+      ${safeUrl(d.rulebook.source_url) ? `— <a href="${safeUrl(d.rulebook.source_url)}" target="_blank" rel="noopener">code ↗</a>` : ''}</div>`);
   }
   for (const w of (d.warnings || [])) p.push(`<div class="dev-warn">⚠ ${esc(w)}</div>`);
   if (A.note) p.push(`<div class="dev-mini">${esc(A.note)} Screening only — verify against the current code text.</div>`);
@@ -2148,7 +2194,6 @@ function wireMetroZoning() {
   if (!cb) return;
   cb.addEventListener('change', () => {
     metroZoningOn = cb.checked;
-    const vis = cb.checked ? 'visible' : 'none';
     setVis(['metro-zoning-fill', 'metro-zoning-line'], cb.checked && !massing());
     setVis(['metro-zoning-3d'], cb.checked && massing());
     if (cb.checked) refreshMetroZoning(); else map.getSource('metro_zoning')?.setData({ type: 'FeatureCollection', features: [] });
@@ -2434,7 +2479,8 @@ async function refreshNationalFlood() {
 }
 
 function wireBasemapButtons() {
-  for (const b of document.querySelectorAll('.seg-btn')) {
+  // Scoped like setBasemap's own highlight: .seg-btn is also the broker filter.
+  for (const b of document.querySelectorAll('#basemap-seg .seg-btn')) {
     b.addEventListener('click', () => setBasemap(b.dataset.basemap));
   }
 }
@@ -2486,22 +2532,34 @@ function wireSearch() {
     clearTimeout(timer);
     const q = input.value.trim();
     clear.hidden = q.length === 0;
-    if (q.length < 3) { list.hidden = true; list.innerHTML = ''; return; }
+    if (q.length < 3) { searchSeq++; searchAbort?.abort(); list.hidden = true; list.innerHTML = ''; return; }
     timer = setTimeout(() => doSearch(q), 250);
   });
   input.addEventListener('keydown', (e) => { if (e.key === 'Escape') { list.hidden = true; input.blur(); } });
   clear.addEventListener('click', () => {
+    clearTimeout(timer); searchSeq++; searchAbort?.abort();
     input.value = ''; clear.hidden = true; list.hidden = true; list.innerHTML = ''; input.focus();
   });
   document.addEventListener('click', (e) => { if (!e.target.closest('#search-section')) list.hidden = true; });
 }
 
+// Typeahead: each debounced keystroke starts a search that can take seconds,
+// so they overlap. Without this, results for "123 M" could land after those
+// for "123 Main St" and replace them -- and clicking then flew to the wrong
+// address -- or a late answer reopened the list after the box was cleared.
+let searchSeq = 0;
+let searchAbort = null;
+
 async function doSearch(q) {
+  const mine = ++searchSeq;
+  searchAbort?.abort();
+  searchAbort = new AbortController();
   const list = document.getElementById('search-results');
   list.innerHTML = '<div class="item"><span class="m">Searching…</span></div>';
   list.hidden = false;
   try {
-    const r = await fetchJSON(`/api/search?q=${encodeURIComponent(q)}`, { timeoutMs: 20000 });
+    const r = await fetchJSON(`/api/search?q=${encodeURIComponent(q)}`, { timeoutMs: 20000, signal: searchAbort.signal });
+    if (mine !== searchSeq) return;
     if (!r.results || !r.results.length) {
       list.innerHTML = '<div class="item"><span class="m">No matches</span></div>'; return;
     }
@@ -2521,7 +2579,8 @@ async function doSearch(q) {
       });
     });
   } catch (err) {
-    list.innerHTML = `<div class="item"><span class="m">Search failed: ${esc(err.message)}</span></div>`;
+    if (mine !== searchSeq || err.name === 'AbortError') return;
+    list.innerHTML = `<div class="item"><span class="m">${failMsg('Search failed', err)}</span></div>`;
   }
 }
 
@@ -2593,13 +2652,19 @@ async function doParcelLookup(lon, lat) {
     const [parcel, zoning, transit, comps, overlays] =
       settled.map((res, i) => (res.status === 'fulfilled' ? res.value : FALLBACKS[i]));
     // For counties outside tri-county pre-baked flood, query FEMA NFHL by point.
+    // A failed check must not read as a clean one: /api/flood answers an
+    // upstream error with {found:false, message}, and a thrown fetch left
+    // flood null -- both used to render "Outside any FEMA flood polygon",
+    // a negative finding nobody actually made.
     if (!overlays.flood) {
       try {
         const fema = await fetchJSON(`/api/flood?lon=${lon}&lat=${lat}`);
         if (fema && fema.found) {
           overlays.flood = { FZONE: fema.zone, ZONESUBTY: fema.subtype, ELEV: fema.bfe, SFHA: fema.sfha };
+        } else if (!fema || fema.message) {
+          overlays.floodUnknown = true;
         }
-      } catch (e) { /* non-fatal */ }
+      } catch (e) { overlays.floodUnknown = true; }
       if (seq !== lookupSeq) return;
     }
     // Snapshot for the ★ Save button (marks tab)
@@ -2705,10 +2770,26 @@ function loadOverlay(key) {
   return OVERLAY_LOADERS[key];
 }
 
+// Every file above is Miami-Dade or Broward. The parcel panel awaits this, so
+// without the gate the FIRST click anywhere -- Denver included -- sat waiting
+// for all nine files (both counties' flood layers among them) to download and
+// parse before showing anything, for overlays that cannot contain the point.
+const OVERLAY_BBOX = [-80.95, 25.10, -79.90, 26.41];   // MDC + Broward, generous
+
+function inOverlayRegion(lon, lat) {
+  const [w, s, e, n] = OVERLAY_BBOX;
+  return lon >= w && lon <= e && lat >= s && lat <= n;
+}
+
 async function queryOverlayMembership(lon, lat) {
   const point = [lon, lat];
-  await Promise.all(Object.keys(OVERLAY_URLS).map(loadOverlay));
   const out = {};
+  if (!inOverlayRegion(lon, lat)) {
+    for (const key of Object.keys(OVERLAY_URLS)) out[key] = null;
+    out.flood = null;   // doParcelLookup falls back to FEMA NFHL by point
+    return out;
+  }
+  await Promise.all(Object.keys(OVERLAY_URLS).map(loadOverlay));
   for (const key of Object.keys(OVERLAY_URLS)) {
     const hit = (OVERLAY_CACHE[key] || []).find((f) => pointInGeom(point, f.geometry));
     out[key] = hit ? (hit.properties || {}) : null;
@@ -2982,8 +3063,8 @@ function renderParcel({ parcel, zoning, transit, comps, overlays, lon, lat, seq 
       parts.push(field('Base elev.', `${esc(overlays.flood.ELEV)} ft NAVD88`));
     }
     parts.push(field('Risk', isSfha ? '<b style="color:var(--danger)">High (SFHA)</b>' : '<span style="color:var(--good)">Moderate / low</span>'));
-  } else if (overlays._error) {
-    parts.push(`<p style="color:var(--text-muted); font-size:11.5px;">Flood check unavailable — overlay data didn't load.</p>`);
+  } else if (overlays._error || overlays.floodUnknown) {
+    parts.push(`<p style="color:var(--warn); font-size:11.5px;">Flood zone unknown — the flood check didn't complete. Click again, or verify at msc.fema.gov.</p>`);
   } else {
     parts.push(`<p style="color:var(--text-muted); font-size:11.5px;">Outside any FEMA flood polygon.</p>`);
   }
@@ -3296,7 +3377,7 @@ async function loadInvestmentSales(zip, seq, state) {
     p.push(`<div style="font-size:10.5px;color:var(--text-muted);margin:5px 0 3px">${st.top_categories.slice(0, 3).map((c) => esc(c.count + '× ' + c.category.replace(/^\d+\s*/, '').toLowerCase())).join(' · ')}</div>`);
   }
   for (const s of (r.sales || []).slice(0, 6)) {
-    p.push(`<div class="comp"><div class="row1"><span class="addr">${esc(s.address)}</span><span class="dist">${fmtUSD(s.price)}</span></div><div class="row2">${esc(s.date)} · ${esc((s.category || '').replace(/^\d+\s*/, '').toLowerCase())}${s.gsf ? ' · ' + esc(Math.round(s.price / s.gsf)) + '/SF' : ''}</div></div>`);
+    p.push(`<div class="comp"><div class="row1"><span class="addr">${esc(s.address)}</span><span class="dist">${fmtUSD(s.price)}</span></div><div class="row2">${esc(s.date)} · ${esc((s.category || '').replace(/^\d+\s*/, '').toLowerCase())}${s.gsf ? ' · $' + esc(Math.round(s.price / s.gsf)) + '/SF' : ''}</div></div>`);
   }
   p.push(`<div style="font-size:10px;color:var(--text-dim);margin-top:4px">${esc(r.source)} · ZIP ${esc(r.zip)} · ${esc((r.window || {}).from || '')} → ${esc((r.window || {}).to || '')}</div>`);
   el.innerHTML = p.join('');
@@ -3318,7 +3399,11 @@ function loadBrokerDirectory(parcel, seq) {
 }
 
 // Fetch + render the Brokers tab for the current scope, type filter and search text.
+// brokerSeq: the search box and type filter call this with no parcel seq, and
+// as a debounced typeahead its queries overlap -- the newest one must win.
+let brokerSeq = 0;
 async function refreshBrokerTab(seq) {
+  const mine = ++brokerSeq;
   const body = document.getElementById('brokers-body');
   const summary = document.getElementById('brokers-summary');
   if (!body) return;
@@ -3329,11 +3414,12 @@ async function refreshBrokerTab(seq) {
   body.innerHTML = '<span style="color:var(--text-dim);font-size:11.5px">Loading directory…</span>';
   let r;
   try {
-    r = await fetchJSON(`/api/broker-directory?state=${st}`
+    r = await fetchJSON(`/api/broker-directory?state=${encodeURIComponent(st)}`
       + (st === 'FL' && ctx.county ? '&county=' + encodeURIComponent(ctx.county) : '')
       + (_brokerType !== 'all' ? '&btype=' + _brokerType : '')
       + (q.length >= 2 ? '&q=' + encodeURIComponent(q) : ''));
   } catch (e) { r = null; }
+  if (mine !== brokerSeq) return;                // a newer search or filter owns the tab
   if (seq != null && seq !== lookupSeq) return;  // stale — a newer parcel owns the tab
   if (!r) { body.innerHTML = '<span style="color:var(--text-dim);font-size:11.5px">Directory unavailable.</span>'; return; }
   if (!r.available) {
@@ -3477,11 +3563,8 @@ async function populateCounts() {
       const badge = document.getElementById('cities-count'); if (badge) badge.textContent = `${n} cities`;
     }
   } catch (e) { _countsDone = false; }  // allow a retry if it failed
-  try {
-    const gj = await fetchJSON('/data/modular_factories.geojson', { timeoutMs: 30000 });
-    const active = (gj.features || []).filter((f) => (f.properties || {}).status === 'active').length;
-    const el = document.getElementById('factories-count'); if (el && active) el.textContent = active;
-  } catch (e) { hideFactoryToggle(); }
+  // The factory count is loadFactoryCount's job; this used to fetch and parse
+  // the same file a second time on every page load.
 }
 // Belt-and-suspenders: also fire once the DOM is ready, before/without the map.
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', populateCounts);
@@ -3645,7 +3728,13 @@ async function openDiligenceReport(lon, lat) {
   const secFlood = flood.found ? [
     row('FEMA zone', E(flood.zone)), row('Subtype', E(flood.subtype)),
     row('SFHA (high-risk)', flood.sfha ? 'Yes' : 'No'), row('Base flood elev', E(flood.bfe)),
-  ].join('') : '<tr><td colspan="2">No FEMA flood data at this point.</td></tr>';
+  ].join('')
+    // {} (the fetch failed) or {found:false, message} (FEMA errored) is an
+    // unfinished check, not a clean result -- a printed report must not say
+    // "no flood data" when nobody got an answer.
+    : (flood.message || !('found' in flood))
+      ? '<tr><td colspan="2"><b>Flood zone unknown</b> — the FEMA check did not complete. Verify at msc.fema.gov before relying on this report.</td></tr>'
+      : '<tr><td colspan="2">Not in a mapped FEMA flood hazard area.</td></tr>';
 
   const d = area.demographics || {};
   const secArea = [
@@ -3740,8 +3829,8 @@ async function openDiligenceReport(lon, lat) {
       ].join('')}</table>${ll.density_note ? `<p class="note">${E(ll.density_note)}</p>` : ''}`;
     }
     const rb = dev.rulebook;
-    const cite = rb ? `<p class="note">Rulebook: ${E(rb.code_name || rb.matched)}${rb.verify ? ' — figures marked for verification against current code text' : ''}${dz.code_url ? ` · <a href="${E(dz.code_url)}" target="_blank">code ↗</a>` : ''}</p>`
-      : (dz.code_url ? `<p class="note"><a href="${E(dz.code_url)}" target="_blank">Governing code ↗</a></p>` : '');
+    const cite = rb ? `<p class="note">Rulebook: ${E(rb.code_name || rb.matched)}${rb.verify ? ' — figures marked for verification against current code text' : ''}${safeUrl(dz.code_url) ? ` · <a href="${safeUrl(dz.code_url)}" target="_blank" rel="noopener">code ↗</a>` : ''}</p>`
+      : (safeUrl(dz.code_url) ? `<p class="note"><a href="${safeUrl(dz.code_url)}" target="_blank" rel="noopener">Governing code ↗</a></p>` : '');
     const warns = (dev.warnings || []).map((wn) => `<p class="note">⚠ ${E(wn)}</p>`).join('');
     secDev = `<table>${baseRows}${sbRow}${bonusRows}</table>${cite}` +
       (llBlock ? `<h3 class="sub-h">Secondary scenario — Live Local Act (SB 102/328)</h3>${llBlock}` : '') +
@@ -3764,7 +3853,7 @@ async function openDiligenceReport(lon, lat) {
     @media print{body{padding:0}} button{margin-bottom:16px;padding:8px 14px;font:inherit;cursor:pointer;border:1px solid #cbd5e1;border-radius:6px;background:#f8fafc}
   </style></head><body>
   <button onclick="window.print()">⎙ Print / Save as PDF</button>
-  <p class="brand">SITEFOLIO</p>
+  <p class="brand">MERIDIAN</p>
   <h1>Site Diligence Report</h1>
   <p class="sub">${E(addr)} · ${lat.toFixed(6)}, ${lon.toFixed(6)} · generated ${E(now.toLocaleString())}</p>
   <h2>Parcel &amp; ownership</h2><table>${secParcel || '<tr><td>No free parcel record at this point.</td></tr>'}</table>
@@ -3985,8 +4074,10 @@ async function loadCondoUnits(folio, unit, seq) {
     wireCondoTable(seq);
   } catch (err) {
     if (seq != null && seq !== lookupSeq) return;
-    panel.hidden = true;
-    body.innerHTML = '';
+    // Not hidden: a hidden panel reads as "not a condo", which for this tool
+    // is a finding. An outage should say it is an outage.
+    panel.hidden = false;
+    body.innerHTML = `<p class="help">${failMsg('Unit roster unavailable', err)}</p>`;
   }
 }
 
@@ -4109,7 +4200,7 @@ async function loadCondoValues(btn, seq) {
     if (seq != null && seq !== lookupSeq) return;
     btn.disabled = false;
     btn.textContent = 'Retry loading values';
-    if (note) note.textContent = 'Failed to load values — try again.';
+    if (note) note.textContent = `Failed to load values — ${errReason(err)}`;
   }
 }
 
@@ -4142,12 +4233,16 @@ function wireLiveLocal() {
 async function runLiveLocal() {
   if (!lastSelection) return;
   const { lon, lat } = lastSelection;
+  // A new parcel click hides this panel; without the check, the old answer
+  // still landed afterwards and drew its 1-mile ring around the OLD parcel.
+  const seq = lookupSeq;
   const out = document.getElementById('ll-result');
   out.hidden = false;
   out.innerHTML = '<p class="help" style="color:#92400e">Scanning 1-mile radius…</p>';
 
   try {
     const r = await fetchJSON(`/api/live-local?lon=${lon}&lat=${lat}`, { timeoutMs: 25000 });
+    if (seq !== lookupSeq) return;
     if (!r.found) {
       out.innerHTML = `<p class="help" style="color:#92400e">${esc(r.note || 'No height data in radius')}</p>`;
       return;
@@ -4180,7 +4275,8 @@ async function runLiveLocal() {
       features: [{ type: 'Feature', geometry: { type: 'LineString', coordinates: ring }, properties: {} }],
     });
   } catch (err) {
-    out.innerHTML = `<p class="help" style="color:var(--danger)">Failed: ${esc(err.message)}</p>`;
+    if (seq !== lookupSeq) return;
+    out.innerHTML = `<p class="help" style="color:var(--danger)">${failMsg('Live Local scan failed', err)}</p>`;
   }
 }
 
@@ -4352,29 +4448,27 @@ function renderMarks() {
     });
     el.querySelector('[data-act=del]').addEventListener('click', async () => {
       try {
-        const r = await fetch(`/api/marks/${id}`, { method: 'DELETE' });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        await fetchJSON(`/api/marks/${id}`, { method: 'DELETE' });
         marksCache = marksCache.filter((x) => x.id !== id);
         renderMarks();
         toast('Removed');
       } catch (err) {
-        toast("Couldn't delete — is the server up?");
+        toast(`Couldn't delete — ${errReason(err)}`);
         loadMarks();  // re-sync with what the server actually has
       }
     });
     const noteEl = el.querySelector('[data-act=note]');
     noteEl.addEventListener('change', async () => {
       try {
-        const r = await fetch(`/api/marks/${id}`, {
+        await fetchJSON(`/api/marks/${id}`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ note: noteEl.value }),
         });
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
         m.note = noteEl.value;
         toast('Note saved');
       } catch (err) {
-        toast("Couldn't save — is the server up?");
+        toast(`Couldn't save the note — ${errReason(err)}`);
         loadMarks();  // re-sync (also restores the input to the stored note)
       }
     });
@@ -4391,7 +4485,7 @@ async function saveMark() {
       body: JSON.stringify(lastLookup),
     });
   } catch (err) {
-    toast("Couldn't save — is the server up?");
+    toast(`Couldn't save — ${errReason(err)}`);
     loadMarks();  // re-sync with the server instead of trusting the local cache
     return;
   }

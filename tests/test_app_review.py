@@ -206,3 +206,16 @@ def test_a_cross_site_post_is_refused(monkeypatch):
 
 def test_cross_site_reads_are_untouched():
     assert client.get("/api/instance", headers={"Origin": "https://evil.example"}).status_code == 200
+
+
+# ── saved addresses: a busy database says so ────────────────────────────────
+
+def test_a_locked_marks_db_explains_itself(monkeypatch):
+    """The 503 carried only {"error": ...}; the UI reads `detail`, so all it
+    could say was "is the server up?" -- about a server that was up."""
+    def locked():
+        raise sqlite3.OperationalError("database is locked")
+    monkeypatch.setattr(app_mod, "_marks_conn", locked)
+    r = client.get("/api/marks")
+    assert r.status_code == 503
+    assert "locked" in r.json()["detail"]

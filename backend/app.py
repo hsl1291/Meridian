@@ -2878,7 +2878,11 @@ def _marks_conn() -> sqlite3.Connection:
 
 
 def _marks_busy() -> JSONResponse:
-    return JSONResponse(status_code=503, content={"error": "marks db busy"})
+    # `detail` is what the frontend shows; "error" kept for anything reading it.
+    return JSONResponse(status_code=503, content={
+        "error": "marks db busy",
+        "detail": "the saved-addresses database is locked by another program "
+                  "(often a sync client) -- try again in a moment"})
 
 
 class MarkIn(BaseModel):
