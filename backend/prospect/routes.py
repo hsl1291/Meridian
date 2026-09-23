@@ -20,6 +20,7 @@ import asyncio
 import io
 import json
 import sqlite3
+import statistics
 from datetime import datetime
 from pathlib import Path
 
@@ -1035,7 +1036,9 @@ def economics(group_key: str,
         try:
             doc = gather(group_key, con, radius_mi=radius_mi)
             psfs = [c["sale_psf"] for c in doc.get("comps", []) if c.get("sale_psf")]
-            nearby_psf = sorted(psfs)[len(psfs) // 2] if psfs else None
+            # statistics.median, not sorted()[len // 2]: the upper middle of an
+            # even count, which pushed the buyout estimate's fallback $/sf up.
+            nearby_psf = statistics.median(psfs) if psfs else None
         except LookupError:
             raise
         except Exception:  # noqa: BLE001 -- comps are optional here, not required

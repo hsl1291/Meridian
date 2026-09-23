@@ -20,7 +20,9 @@ import re
 import html as _html
 import math
 import sqlite3
+import statistics
 import time
+import urllib.parse
 from pathlib import Path
 
 from .shared_paths import APP_ROOT, shared_layers
@@ -44,10 +46,6 @@ DATA_DIR = ROOT / "data"
 # shared.db rather than inside either app. App-private state (marks.db,
 # geom_cache.db, the harvested registries) stays in DATA_DIR.
 # Falls back to DATA_DIR so an install that never ran the mover still works.
-import os as _os
-
-
-
 LAYERS_DIR = shared_layers()
 
 
@@ -300,6 +298,27 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+_WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+
+
+@app.middleware("http")
+async def _refuse_cross_site_writes(request: Request, call_next):
+    """CORS stops another site READING our responses, not SENDING requests. A
+    page open in the same browser could still fire a plain form POST at
+    127.0.0.1:8012 -- /api/update/apply takes no body at all, and a PDF upload
+    is a multipart form -- and it would run. (JSON routes were already safe:
+    FastAPI refuses a non-JSON content type, and a JSON one forces a CORS
+    preflight.) Browsers always send Origin on such a request, so a write whose
+    Origin isn't this host is refused. Scripts, curl and the launcher send no
+    Origin and are unaffected."""
+    if request.method in _WRITE_METHODS:
+        origin = request.headers.get("origin")
+        if origin is not None:
+            netloc = urllib.parse.urlsplit(origin).netloc.lower()
+            if not netloc or netloc != (request.headers.get("host") or "").lower():
+                return JSONResponse({"detail": "Cross-site request refused."}, status_code=403)
+    return await call_next(request)
+
 # ── unbuilt data store ─────────────────────────────────────────────────────
 # A fresh clone has an empty data/ (see data/README.md) and the Docker image
 # ships map layers only, so the condo and metro routes are querying a store that
@@ -446,6 +465,17 @@ def county_for_point(lat: float, lon: float = -80.2) -> str:
         if MDC_LAT_MAX < lat <= BRO_LAT_MAX:
             return "broward"
     return "statewide"
+
+
+def _box_env(lon: float, lat: float, radius_ft: float) -> str:
+    """Esri envelope reaching radius_ft from the point in every direction. A
+    degree of longitude is cos(lat) shorter than a degree of latitude, so using
+    one pad for both (as build-stats and supply-pipeline did) cut the box ~10%
+    short east-west at Miami's latitude and undercounted "within 1 mile"."""
+    dlat = radius_ft / 364320.0
+    dlon = radius_ft / (364320.0 * max(math.cos(math.radians(lat)), 0.01))
+    return json.dumps({"xmin": lon - dlon, "ymin": lat - dlat, "xmax": lon + dlon,
+                       "ymax": lat + dlat, "spatialReference": {"wkid": 4326}})
 
 
 def _haversine_ft(lat1, lon1, lat2, lon2):
@@ -1172,8 +1202,10 @@ async def _query_state_parcel(state: str, lon: float, lat: float, client: httpx.
     sale_price = _g(a, *fm.get("sale_price", []))
     sale_date = _g(a, *fm.get("sale_date", []))
     sales = []
-    # Only surface real arm's-length-ish sales (skip $0 placeholders).
-    if sale_price and float(sale_price) > 0:
+    # Only surface real arm's-length-ish sales (skip $0 placeholders). Some
+    # layers store these as text ("$125,000"); a bare float() raised, and
+    # parcel_at_point turned that into "Upstream error" for the whole parcel.
+    if (_fnum(str(sale_price or "").replace("$", "")) or 0) > 0:
         sales.append({"price": sale_price, "date": str(sale_date) if sale_date else None,
                       "or_book": str(_g(a, *fm.get("or_book", [])) or "").strip(),
                       "or_page": str(_g(a, *fm.get("or_page", [])) or "").strip(), "qual": ""})
@@ -1191,7 +1223,7 @@ async def _query_state_parcel(state: str, lon: float, lat: float, client: httpx.
         "owner": _g(a, *fm.get("owner", [])),
         "use_description": _g(a, *fm.get("use", [])),
         "lot_size_sf": _g(a, *fm.get("lot_sf", [])) or (
-            round(float(_g(a, *fm.get("lot_acres", [])) or 0) * 43560) or None),
+            round((_fnum(_g(a, *fm.get("lot_acres", []))) or 0) * 43560) or None),
         "building_area_sf": _g(a, *fm.get("bldg_sf", [])),
         "year_built": _g(a, *fm.get("year", [])),
         "just_value": _g(a, *fm.get("value", [])),
@@ -1922,18 +1954,23 @@ async def condo_units(folio: str = Query(..., min_length=10)):
     building roster) — unit, owner, sqft, year built — in one fast query."""
     clean = _clean_folio(folio)
     async with httpx.AsyncClient(timeout=15.0) as client:
-        self_r = await client.get(f"{MDC_ROOT}/ParcelsView_gdb/FeatureServer/0/query", params={
-            "where": f"FOLIO='{clean}'", "outFields": "FOLIO,PARENT_FOLIO,TRUE_SITE_ADDR", "f": "json"})
-        self_r.raise_for_status()
-        self_feats = self_r.json().get("features") or []
-        self_a = (self_feats[0].get("attributes") if self_feats else {}) or {}
-        building_folio = self_a.get("PARENT_FOLIO") or None
-        feats = await _condo_roster(building_folio, client) if building_folio else []
-        if not feats:
-            # Either `clean` IS the master/common-element folio, or this genuinely
-            # isn't part of a multi-unit building.
-            building_folio = clean
-            feats = await _condo_roster(building_folio, client)
+        # These two lookups had no error handling, so a Miami-Dade GIS outage
+        # surfaced as a bare 500 -- indistinguishable, in the panel, from a bug.
+        try:
+            self_r = await client.get(f"{MDC_ROOT}/ParcelsView_gdb/FeatureServer/0/query", params={
+                "where": f"FOLIO='{clean}'", "outFields": "FOLIO,PARENT_FOLIO,TRUE_SITE_ADDR", "f": "json"})
+            self_r.raise_for_status()
+            self_feats = self_r.json().get("features") or []
+            self_a = (self_feats[0].get("attributes") if self_feats else {}) or {}
+            building_folio = self_a.get("PARENT_FOLIO") or None
+            feats = await _condo_roster(building_folio, client) if building_folio else []
+            if not feats:
+                # Either `clean` IS the master/common-element folio, or this genuinely
+                # isn't part of a multi-unit building.
+                building_folio = clean
+                feats = await _condo_roster(building_folio, client)
+        except (httpx.HTTPError, ValueError) as e:
+            raise HTTPException(502, f"Miami-Dade parcel service unavailable: {e}")
         if not feats:
             return {"is_condo": False}
         # The master/common-element row's address has no unit suffix — a real
@@ -1998,7 +2035,10 @@ async def condo_unit_values(building_folio: str = Query(..., min_length=10)):
     once unbounded, hence the cap — surfaced to the client as `truncated`."""
     clean = _clean_folio(building_folio, "building_folio")
     async with httpx.AsyncClient(timeout=15.0) as client:
-        feats = await _condo_roster(clean, client)
+        try:
+            feats = await _condo_roster(clean, client)
+        except (httpx.HTTPError, ValueError) as e:
+            raise HTTPException(502, f"Miami-Dade parcel service unavailable: {e}")
     if not feats:
         return {"values": {}, "enriched_count": 0, "truncated": False}
     folios = [a for a in (f.get("attributes", {}).get("FOLIO") for f in feats) if a]
@@ -2758,8 +2798,10 @@ def comps_in_radius(
     bldgs.sort(key=lambda x: x["distance_ft"])
 
     def _median(xs):
-        xs = sorted(x for x in xs if x)
-        return round(xs[len(xs) // 2], 2) if xs else None
+        # statistics.median, not xs[len // 2]: that is the UPPER middle of an
+        # even-length list, which biased every even-count median upward.
+        xs = [x for x in xs if x]
+        return round(statistics.median(xs), 2) if xs else None
 
     def agg(group):
         psf = [l.get("price_per_sqft") for l in group if l.get("price_per_sqft")]
@@ -2988,7 +3030,6 @@ def _parse_sunbiz_detail(html: str) -> dict:
 
 
 import subprocess
-import urllib.parse
 
 # Sunbiz sits behind a WAF that fingerprints the TLS/HTTP client — httpx is 403'd
 # but the system curl passes. Shell out to curl for these two GETs.
@@ -3032,9 +3073,17 @@ def _norm_county(name: str) -> str:
     return re.sub(r"\s+county.*$", "", (name or "").lower()).strip()
 
 
+def _located(c: dict) -> bool:
+    # Harvested entries sometimes carry "lon": null or a string; c.get("lon", 999)
+    # only covers a MISSING key, so those raised TypeError mid-route.
+    return all(isinstance(c.get(k), (int, float)) and not isinstance(c.get(k), bool)
+               for k in ("lon", "lat"))
+
+
 def _nearby_cities(registry: list, lon: float, lat: float, deg: float = 0.5) -> list:
-    out = [c for c in registry if abs(c.get("lon", 999) - lon) < deg and abs(c.get("lat", 999) - lat) < deg]
-    out.sort(key=lambda c: (c.get("lon", 999) - lon) ** 2 + (c.get("lat", 999) - lat) ** 2)
+    out = [c for c in registry
+           if _located(c) and abs(c["lon"] - lon) < deg and abs(c["lat"] - lat) < deg]
+    out.sort(key=lambda c: (c["lon"] - lon) ** 2 + (c["lat"] - lat) ** 2)
     return out
 
 
@@ -3522,10 +3571,9 @@ def _zoning_candidates(minx, miny, maxx, maxy):
 
     bx0, by0, bx1, by1 = minx - 0.35, miny - 0.35, maxx + 0.35, maxy + 0.35
     for c in CITY_ZONING:
-        if not c.get("url") or not c.get("code"):
+        if not c.get("url") or not c.get("code") or not _located(c):
             continue  # tolerate malformed harvested entries
-        clon, clat = c.get("lon", 999), c.get("lat", 999)
-        if bx0 <= clon <= bx1 and by0 <= clat <= by1:
+        if bx0 <= c["lon"] <= bx1 and by0 <= c["lat"] <= by1:
             out.append(("city", c))
     return out[:8]
 
@@ -3910,9 +3958,7 @@ async def build_stats(lon: float = Query(...), lat: float = Query(...),
     """Development pulse for an area: count + total declared value of NEW-construction
     permits, vs all permits, within radius. Uses MDC permits or the nearest harvested
     city permit service."""
-    d = radius_ft / 364320.0  # deg
-    env = json.dumps({"xmin": lon - d, "ymin": lat - d, "xmax": lon + d, "ymax": lat + d,
-                      "spatialReference": {"wkid": 4326}})
+    env = _box_env(lon, lat, radius_ft)
     in_mdc = COUNTY_BBOX_MDC[0] <= lon <= COUNTY_BBOX_MDC[2] and COUNTY_BBOX_MDC[1] <= lat <= COUNTY_BBOX_MDC[3]
 
     # Ordered sources: MDC first inside its bbox, then the nearest harvested city.
@@ -4186,9 +4232,7 @@ async def supply_pipeline(lon: float = Query(...), lat: float = Query(...),
     """Competing new-construction nearby: large-value multifamily/mixed-use permits
     within radius, from the same permit sources /api/permits already uses. This is
     a coverage-limited signal (MDC + harvested cities only), not a full pipeline."""
-    d = radius_ft / 364320.0
-    env = json.dumps({"xmin": lon - d, "ymin": lat - d, "xmax": lon + d, "ymax": lat + d,
-                      "spatialReference": {"wkid": 4326}})
+    env = _box_env(lon, lat, radius_ft)
     in_mdc = COUNTY_BBOX_MDC[0] <= lon <= COUNTY_BBOX_MDC[2] and COUNTY_BBOX_MDC[1] <= lat <= COUNTY_BBOX_MDC[3]
 
     # Ordered sources: MDC first inside its bbox, then the nearest harvested city.
@@ -4505,10 +4549,18 @@ async def area_context(lon: float = Query(...), lat: float = Query(...)):
     if len(county_fips) == 5:
         async with httpx.AsyncClient(timeout=10.0) as client:
             try:
-                r = await client.get(
-                    f"https://data.bls.gov/cew/data/api/2024/a/area/{county_fips}.csv",
-                    headers={"User-Agent": "us-property-map/1.0"})
-                if r.status_code == 200:
+                # Annual averages for year Y publish around September of Y+1, so
+                # try the newest year that could exist and step back. A fixed
+                # year silently aged the panel a year at a time.
+                from datetime import date as _date
+                r = None
+                for yr in range(_date.today().year - 1, _date.today().year - 4, -1):
+                    r = await client.get(
+                        f"https://data.bls.gov/cew/data/api/{yr}/a/area/{county_fips}.csv",
+                        headers={"User-Agent": "us-property-map/1.0"})
+                    if r.status_code == 200:
+                        break
+                if r is not None and r.status_code == 200:
                     # total-covered = own_code 0, industry_code 10; CSV, header row present
                     import csv as _csv
                     import io as _io

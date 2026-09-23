@@ -31,6 +31,7 @@ import argparse
 import itertools
 import json
 import sys
+import statistics
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -121,7 +122,7 @@ def cmd_report(con, args):
             "Run --labels to see what the registry's status fields contain; the "
             "terms this script looks for may not be the wording in your roll.")
 
-    cfg = json.loads(CFG_PATH.read_text())
+    cfg = json.loads(CFG_PATH.read_text(encoding="utf-8"))
     w = cfg["score_weights"]
     a = auc(rows, lambda r: r["score"] or 0)
     print(f"{len(rows):,} matched buildings, {len(pos)} labelled terminated "
@@ -135,7 +136,7 @@ def cmd_report(con, args):
     print(f"Top decile captures:       {in_top} of {len(pos)} "
           f"({100 * in_top / len(pos):.0f}%) — a random decile would capture 10%")
     pcts = sorted(percentile_of(rows, r) for r in pos)
-    print(f"Median percentile of a terminated building: {pcts[len(pcts) // 2]:.0f}\n")
+    print(f"Median percentile of a terminated building: {statistics.median(pcts):.0f}\n")
 
     print("Each term on its own:")
     for t in TERMS:
@@ -154,7 +155,7 @@ def cmd_suggest(con, args):
     if len(pos) < 5:
         raise SystemExit(f"only {len(pos)} labelled positive(s) — too few to fit anything. "
                          "Run --report to see where the current weights stand.")
-    cfg = json.loads(CFG_PATH.read_text())
+    cfg = json.loads(CFG_PATH.read_text(encoding="utf-8"))
     current = cfg["score_weights"]
 
     # Weights on a 0.05 grid summing to 1. Small enough to enumerate exactly,

@@ -25,6 +25,7 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import httpx
+import statistics
 from fastapi import APIRouter, Query
 from fastapi.responses import StreamingResponse
 
@@ -773,7 +774,7 @@ async def _cook_investment_sales(client: httpx.AsyncClient, zip: str, min_price:
             return None
 
     prices = sorted(p for p in (_f(x.get("sale_price")) for x in rows) if p)
-    med = lambda a: a[len(a) // 2] if a else None
+    med = lambda a: statistics.median(a) if a else None  # not a[len//2]: upper-middle on even counts
     cats: dict = {}
     for x in rows:
         c = (x.get("class") or "").strip()
@@ -839,7 +840,7 @@ async def investment_sales(zip: str = Query(..., min_length=5, max_length=5),
     prices = sorted(p for p in (_f(x.get("sale_price")) for x in rows) if p)
     ppsf = sorted(p / s for p, s in ((_f(x.get("sale_price")), _f(x.get("gross_square_feet"))) for x in rows)
                   if p and s and s > 500)
-    med = lambda a: a[len(a) // 2] if a else None
+    med = lambda a: statistics.median(a) if a else None  # not a[len//2]: upper-middle on even counts
     cats: dict = {}
     for x in rows:
         c = (x.get("building_class_category") or "").strip()
