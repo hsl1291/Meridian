@@ -50,7 +50,7 @@ def test_copies_databases_files_and_subfolders(old_new):
     old, new = old_new
     _db(old / "data" / "prospect.db", rows=3)
     _db(old / "data" / "_shared" / "shared.db", rows=2)
-    (old / "data" / "zori_rents.json").write_text('{"a": 1}')
+    (old / "data" / "zori_rents.json").write_text('{"a": 1}', encoding="utf-8")
     (old / "data" / "memos").mkdir()
     (old / "data" / "memos" / "m1.pdf").write_bytes(b"%PDF-1.4")
 
@@ -67,14 +67,14 @@ def test_never_overwrites_a_file_that_has_data(old_new):
     old, new = old_new
     _db(old / "data" / "prospect.db", rows=5)
     _db(new / "data" / "prospect.db", rows=1)      # user already did work here
-    (old / "data" / "zcta_pop.json").write_text("old")
-    (new / "data" / "zcta_pop.json").write_text("new")
+    (old / "data" / "zcta_pop.json").write_text("old", encoding="utf-8")
+    (new / "data" / "zcta_pop.json").write_text("new", encoding="utf-8")
 
     r = di.import_data(old, new, log=lambda *_: None)
 
     assert sorted(r["kept"]) == ["prospect.db", "zcta_pop.json"]
     assert _rows(new / "data" / "prospect.db") == 1
-    assert (new / "data" / "zcta_pop.json").read_text() == "new"
+    assert (new / "data" / "zcta_pop.json").read_text(encoding="utf-8") == "new"
 
 
 def test_replaces_an_empty_database_the_first_start_created(old_new):
@@ -115,7 +115,7 @@ def test_a_live_wal_database_comes_across_whole_and_sidecars_are_not_copied(old_
 def test_the_old_folder_is_left_exactly_as_it_was(old_new):
     old, new = old_new
     _db(old / "data" / "prospect.db", rows=2)
-    (old / "data" / "x.json").write_text("{}")
+    (old / "data" / "x.json").write_text("{}", encoding="utf-8")
     before = {p: p.read_bytes() for p in (old / "data").rglob("*") if p.is_file()}
     di.import_data(old, new, log=lambda *_: None)
     after = {p: p.read_bytes() for p in (old / "data").rglob("*") if p.is_file()}
@@ -124,7 +124,7 @@ def test_the_old_folder_is_left_exactly_as_it_was(old_new):
 
 def test_skips_a_file_the_disk_cannot_hold(old_new, monkeypatch):
     old, new = old_new
-    (old / "data" / "big.json").write_text("x" * 100)
+    (old / "data" / "big.json").write_text("x" * 100, encoding="utf-8")
 
     class Usage:
         free = 50
@@ -139,10 +139,10 @@ def test_skips_a_file_the_disk_cannot_hold(old_new, monkeypatch):
 
 def test_a_failed_copy_leaves_no_half_written_file(old_new, monkeypatch):
     old, new = old_new
-    (old / "data" / "a.json").write_text("{}")
+    (old / "data" / "a.json").write_text("{}", encoding="utf-8")
 
     def boom(src, dst):
-        Path(dst).write_text("partial")
+        Path(dst).write_text("partial", encoding="utf-8")
         raise OSError("disk yanked")
     monkeypatch.setattr(di.shutil, "copy2", boom)
     r = di.import_data(old, new, log=lambda *_: None)

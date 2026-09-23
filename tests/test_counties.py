@@ -16,7 +16,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-CFG = json.loads((ROOT / "backend" / "prospect" / "config.json").read_text())
+CFG = json.loads((ROOT / "backend" / "prospect" / "config.json").read_text(encoding="utf-8"))
 
 spec = importlib.util.spec_from_file_location("bt_c", ROOT / "scripts/prospect/build_targets.py")
 bt = importlib.util.module_from_spec(spec)
@@ -66,14 +66,14 @@ def test_a_county_with_no_zoning_layer_does_not_borrow_another_ones():
 
 def test_capacity_reads_the_configured_layer_not_a_constant():
     from backend.prospect import capacity
-    src = (ROOT / "backend" / "prospect" / "capacity.py").read_text()
+    src = (ROOT / "backend" / "prospect" / "capacity.py").read_text(encoding="utf-8")
     assert 'ZONING_LAYER' in src
     assert '_load("mdc_zoning")' not in src, "the layer name is configuration now"
     assert capacity.ZONING_LAYER == counties()["DADE"]["zoning_layer"]
 
 
 def test_the_projection_and_bbox_are_not_literals_in_the_builder():
-    src = (ROOT / "scripts" / "prospect" / "build_targets.py").read_text()
+    src = (ROOT / "scripts" / "prospect" / "build_targets.py").read_text(encoding="utf-8")
     assert "Transformer.from_crs(2236" not in src, "EPSG comes from the county"
     assert "-81.0 < lon < -80.0" not in src, "the bbox comes from the county"
 

@@ -27,7 +27,7 @@ spec = importlib.util.spec_from_file_location("startmod", ROOT / "start.py")
 start = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(start)
 
-SRC = (ROOT / "start.py").read_text()
+SRC = (ROOT / "start.py").read_text(encoding="utf-8")
 
 
 # ── pip ────────────────────────────────────────────────────────────────────
@@ -141,7 +141,7 @@ def test_setup_only_installs_without_starting_a_server():
 
 # ── the one-click installer ──────────────────────────────────────────────────
 
-INSTALL_BAT = (ROOT / "install.bat").read_text()
+INSTALL_BAT = (ROOT / "install.bat").read_text(encoding="utf-8")
 
 
 def test_install_bat_exists_and_is_a_real_batch_file():
@@ -168,7 +168,7 @@ def test_install_bat_uses_no_powershell():
 def test_install_bat_reports_missing_python_the_same_way_start_bat_does():
     """Copy-paste drift check: both launchers hit the same failure mode (no
     python on PATH) and should send the user to the same fix."""
-    start_bat = (ROOT / "start.bat").read_text()
+    start_bat = (ROOT / "start.bat").read_text(encoding="utf-8")
     assert "python.org/downloads" in INSTALL_BAT
     assert "Add python.exe to PATH" in INSTALL_BAT
     assert "python.org/downloads" in start_bat  # sanity: still true of the sibling script
@@ -189,8 +189,8 @@ def test_install_bat_tells_the_user_whether_it_actually_worked():
 
 # ── auto-update ──────────────────────────────────────────────────────────────
 
-INSTALL_PY = (ROOT / "install.py").read_text()
-LAUNCH_PY = (ROOT / "launch.py").read_text()
+INSTALL_PY = (ROOT / "install.py").read_text(encoding="utf-8")
+LAUNCH_PY = (ROOT / "launch.py").read_text(encoding="utf-8")
 
 
 def test_the_recurring_task_is_on_by_default_not_opt_in():
@@ -245,6 +245,7 @@ def test_nothing_user_facing_still_says_the_old_name():
         "tests/test_start.py",       # this test
         "tests/test_data_import.py",     # an old Groundwork folder is a real import source
         "tests/test_install_windows.py", # ... and so is its shortcut
+        "tests/ci_windows_install.py",   # CI fakes an old Groundwork install to migrate from
     }
     exts = {".py", ".js", ".html", ".css", ".md", ".json", ".bat", ".sh", ".command", ".yml"}
     skip = {".git", ".venv", "venv", "__pycache__", ".pytest_cache", ".backup", "node_modules"}
@@ -280,7 +281,7 @@ def test_the_old_environment_variables_are_still_honoured(monkeypatch):
 def test_the_old_shortcut_and_logon_task_are_removed_on_install():
     """A stale logon task starting the old folder is how you end up looking at
     old code on port 8012 and wondering why nothing changed."""
-    src = (ROOT / "install.py").read_text()
+    src = (ROOT / "install.py").read_text(encoding="utf-8")
     assert "Groundwork.lnk" in src
     assert "Groundwork Server" in src
 

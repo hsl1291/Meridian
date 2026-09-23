@@ -94,7 +94,7 @@ def main() -> int:
         if not any(p for p in pops):
             continue
         zctas[z] = {"lat": lat, "lon": lon, "pop": pops}
-    OUT.write_text(json.dumps({"years": years, "zctas": zctas}, separators=(",", ":")))
+    OUT.write_text(json.dumps({"years": years, "zctas": zctas}, separators=(",", ":")), encoding="utf-8")
     print(f"wrote {OUT} — {len(zctas)} ZCTAs x {len(years)} vintages, {OUT.stat().st_size/1e6:.1f} MB")
     return 0
 

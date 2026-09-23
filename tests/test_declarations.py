@@ -217,10 +217,15 @@ def test_the_windows_fallback_is_not_used_off_windows(monkeypatch, tmp_path):
 
     monkeypatch.delenv("APPS_SHARED", raising=False)
     monkeypatch.delenv("APPS_SHARED_DB", raising=False)
+    # Faking os.name makes Path.home() take the POSIX branch, which needs HOME
+    # -- unset on a real Windows runner. Point it somewhere with no legacy store.
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(os, "name", "posix")
     root = shared_paths.shared_root()
     assert root.is_absolute()
-    assert "C:" not in str(root)
+    # Not `"C:" not in str(root)`: a checkout on drive C: is fine. The bug was
+    # returning the Windows default itself.
+    assert not str(root).startswith(shared_paths.WINDOWS_DEFAULT)
 
 
 def test_an_explicit_override_always_wins(monkeypatch, tmp_path):
@@ -240,6 +245,6 @@ def test_the_resolver_exists_in_exactly_one_place():
     for f in ROOT.rglob("*.py"):
         if ".git" in f.parts or f.name == "shared_paths.py":
             continue
-        if pattern.search(f.read_text()):
+        if pattern.search(f.read_text(encoding="utf-8")):
             hits.append(str(f.relative_to(ROOT)))
     assert not hits, f"local copies of the resolver: {hits}"

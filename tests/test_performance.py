@@ -69,7 +69,7 @@ def test_an_empty_viewport_short_circuits_without_opening_a_client():
     assert _zoning_candidates(0, 0, 0.001, 0.001) == [] or True  # may legitimately match nothing
     # The real assertion: no candidates -> no HTTP client is even constructed.
     import backend.app as m
-    src = (ROOT / "backend" / "app.py").read_text()
+    src = (ROOT / "backend" / "app.py").read_text(encoding="utf-8")
     fn = src[src.index("async def zoning_overlay("):src.index("\n\n\n", src.index("async def zoning_overlay("))]
     assert "if not candidates:" in fn
 
@@ -397,7 +397,7 @@ def test_permit_candidates_are_capped_even_though_only_one_is_needed():
 
 def test_upload_declaration_offloads_extraction_to_a_thread():
     """Source-level: await asyncio.to_thread(extract, ...), not a direct call."""
-    src = (ROOT / "backend" / "prospect" / "routes.py").read_text()
+    src = (ROOT / "backend" / "prospect" / "routes.py").read_text(encoding="utf-8")
     fn = src[src.index("async def upload_declaration("):]
     fn = fn[:fn.index("\n@router.")]
     assert "asyncio.to_thread(extract" in fn

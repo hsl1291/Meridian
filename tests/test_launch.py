@@ -52,12 +52,12 @@ def test_update_is_due_when_no_stamp_exists_yet(launch):
 
 
 def test_update_is_not_due_right_after_a_check(launch):
-    launch.VERSION_STAMP.write_text("{}")
+    launch.VERSION_STAMP.write_text("{}", encoding="utf-8")
     assert launch._update_due() is False
 
 
 def test_update_is_due_again_after_the_interval_elapses(launch):
-    launch.VERSION_STAMP.write_text("{}")
+    launch.VERSION_STAMP.write_text("{}", encoding="utf-8")
     stale = time.time() - (launch.UPDATE_CHECK_INTERVAL_HOURS * 3600 + 60)
     import os
     os.utime(launch.VERSION_STAMP, (stale, stale))
@@ -67,7 +67,7 @@ def test_update_is_due_again_after_the_interval_elapses(launch):
 # ── check_for_update: the network path is skipped when not due ─────────────
 
 def test_check_for_update_does_nothing_when_not_due(launch, monkeypatch):
-    launch.VERSION_STAMP.write_text("{}")  # just checked -> not due again yet
+    launch.VERSION_STAMP.write_text("{}", encoding="utf-8")  # just checked -> not due again yet
 
     def _boom(*a, **kw):
         raise AssertionError("apply() must not be called when an update is not due")
@@ -107,7 +107,7 @@ def test_check_for_update_restarts_when_files_actually_changed(launch, monkeypat
     monkeypatch.setattr(launch.subprocess, "run",
                         lambda *a, **kw: _FakeCompletedProcess(0))
     assert launch.check_for_update() is True
-    assert "applied 3 file(s)" in launch.UPDATE_LOG.read_text()
+    assert "applied 3 file(s)" in launch.UPDATE_LOG.read_text(encoding="utf-8")
 
 
 def test_check_for_update_does_not_restart_when_nothing_changed(launch, monkeypatch):
@@ -125,7 +125,7 @@ def test_check_for_update_does_not_restart_when_nothing_changed(launch, monkeypa
 def test_check_for_update_logs_and_returns_false_when_github_is_unreachable(launch, monkeypatch):
     _stub_updater(monkeypatch, {"ok": False, "error": "Could not reach GitHub: timed out"})
     assert launch.check_for_update() is False
-    assert "Could not reach GitHub" in launch.UPDATE_LOG.read_text()
+    assert "Could not reach GitHub" in launch.UPDATE_LOG.read_text(encoding="utf-8")
 
 
 def test_check_for_update_still_signals_a_restart_if_dependency_setup_fails(launch, monkeypatch):
@@ -139,7 +139,7 @@ def test_check_for_update_still_signals_a_restart_if_dependency_setup_fails(laun
     monkeypatch.setattr(launch.subprocess, "run",
                         lambda *a, **kw: _FakeCompletedProcess(1))
     assert launch.check_for_update() is True
-    assert "dependency setup after update failed" in launch.UPDATE_LOG.read_text()
+    assert "dependency setup after update failed" in launch.UPDATE_LOG.read_text(encoding="utf-8")
 
 
 # ── main(): an applied update forces a restart even if the old server is

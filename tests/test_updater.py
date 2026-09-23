@@ -67,7 +67,7 @@ def test_user_data_is_never_replaced(app, monkeypatch):
     serve(monkeypatch, blob, local="oldsha")
     r = updater.apply()
     assert r["updated"]
-    assert (app / "data" / "prospect.db").read_text() == "IRREPLACEABLE\n"
+    assert (app / "data" / "prospect.db").read_text(encoding="utf-8") == "IRREPLACEABLE\n"
     assert r["protected_skipped"] >= 1
 
 
@@ -76,14 +76,14 @@ def test_the_environment_is_never_replaced(app, monkeypatch):
                                   "backend/app.py": "new code\n"})
     serve(monkeypatch, blob, local="oldsha")
     updater.apply()
-    assert (app / ".venv" / "marker").read_text() == "env\n"
+    assert (app / ".venv" / "marker").read_text(encoding="utf-8") == "env\n"
 
 
 def test_application_code_is_replaced(app, monkeypatch):
     blob = fake_repo(app.parent, {"backend/app.py": "new code\n"})
     serve(monkeypatch, blob, local="oldsha")
     r = updater.apply()
-    assert (app / "backend" / "app.py").read_text() == "new code\n"
+    assert (app / "backend" / "app.py").read_text(encoding="utf-8") == "new code\n"
     assert "backend/app.py" in r["changed"]
 
 
@@ -98,7 +98,7 @@ def test_config_gains_new_keys_and_keeps_every_value_set(app, monkeypatch):
          "score_weights": {"age": 0.25}, "counties": {"DADE": {}}})})
     serve(monkeypatch, blob, local="oldsha")
     updater.apply()
-    cfg = json.loads((app / "backend" / "prospect" / "config.json").read_text())
+    cfg = json.loads((app / "backend" / "prospect" / "config.json").read_text(encoding="utf-8"))
     assert cfg["memo"]["firm"] == "Harold Holdings", "a set value must survive"
     assert cfg["score_weights"]["age"] == 0.99, "a tuned weight must survive"
     assert cfg["memo"]["confidentiality"] == "NEW", "a new key must arrive"
@@ -111,7 +111,7 @@ def test_an_unparseable_config_is_left_completely_alone(app, monkeypatch):
     blob = fake_repo(app.parent, {"backend/prospect/config.json": '{"a": 1}'})
     serve(monkeypatch, blob, local="oldsha")
     updater.apply()
-    assert (app / "backend" / "prospect" / "config.json").read_text() == "{ broken"
+    assert (app / "backend" / "prospect" / "config.json").read_text(encoding="utf-8") == "{ broken"
 
 
 # ── recoverability ─────────────────────────────────────────────────────────
@@ -123,14 +123,14 @@ def test_every_replaced_file_is_backed_up_first(app, monkeypatch):
     serve(monkeypatch, blob, local="oldsha")
     r = updater.apply()
     backup = Path(r["backup"])
-    assert (backup / "backend" / "app.py").read_text() == "old code\n"
+    assert (backup / "backend" / "app.py").read_text(encoding="utf-8") == "old code\n"
 
 
 def test_a_corrupt_download_changes_nothing(app, monkeypatch):
     serve(monkeypatch, b"this is not a zip", local="oldsha")
     r = updater.apply()
     assert r["ok"] is False and "unpack" in r["error"].lower()
-    assert (app / "backend" / "app.py").read_text() == "old code\n"
+    assert (app / "backend" / "app.py").read_text(encoding="utf-8") == "old code\n"
 
 
 def test_no_staging_directory_is_left_behind(app, monkeypatch):
@@ -155,7 +155,7 @@ def test_a_matching_sha_short_circuits(app, monkeypatch):
     serve(monkeypatch, blob, sha="same", local="same")
     r = updater.apply()
     assert r["updated"] is False and r["reason"] == "already up to date"
-    assert (app / "backend" / "app.py").read_text() == "old code\n"
+    assert (app / "backend" / "app.py").read_text(encoding="utf-8") == "old code\n"
 
 
 def test_a_copy_with_no_stamp_is_unknown_not_out_of_date(app, monkeypatch):
@@ -172,7 +172,7 @@ def test_a_dry_run_reports_without_touching_anything(app, monkeypatch):
     serve(monkeypatch, blob, local="oldsha")
     r = updater.apply(dry_run=True)
     assert r["changed_count"] == 1
-    assert (app / "backend" / "app.py").read_text() == "old code\n"
+    assert (app / "backend" / "app.py").read_text(encoding="utf-8") == "old code\n"
     assert not (app / ".version").exists()
 
 
@@ -191,7 +191,7 @@ def test_the_updater_shells_out_to_nothing():
     the module's own docstring promises no PowerShell, and a test that fails on
     the promise is a test that punishes documenting the decision."""
     import re
-    src = (ROOT / "backend" / "updater.py").read_text()
+    src = (ROOT / "backend" / "updater.py").read_text(encoding="utf-8")
     for banned in (r"\bimport subprocess\b", r"\bos\.system\b", r"shell\s*=\s*True",
                    r"powershell(\.exe)?\s+[-/]", r"\bpwsh\b"):
         assert not re.search(banned, src, re.I), banned
@@ -202,7 +202,7 @@ def test_the_launchers_do_not_use_powershell():
     powershell to do the real work would satisfy the letter and not the point."""
     import re
     for name in ("start.bat", "update.bat", "start.sh", "update.sh", "start.py"):
-        src = (ROOT / name).read_text()
+        src = (ROOT / name).read_text(encoding="utf-8")
         for banned in (r"powershell(\.exe)?\s+[-/]", r"\bpwsh\b", r"Invoke-WebRequest",
                        r"Start-Process"):
             assert not re.search(banned, src, re.I), f"{name}: {banned}"
@@ -212,7 +212,7 @@ def test_the_launchers_need_nothing_but_python():
     """`py` then `python`, and a real message when neither is there — not a
     traceback, and not silence."""
     for name in ("start.bat", "update.bat"):
-        src = (ROOT / name).read_text()
+        src = (ROOT / name).read_text(encoding="utf-8")
         assert "where py" in src and "where python" in src, name
         assert "python.org/downloads" in src, f"{name} must say where to get Python"
         assert "pause" in src, f"{name} must not close the window on an error"
@@ -225,7 +225,7 @@ def test_the_update_source_is_configuration_not_a_constant(monkeypatch):
     copy BACKWARD, so it has to be visible and editable."""
     monkeypatch.delenv("MERIDIAN_REPO", raising=False)
     monkeypatch.delenv("MERIDIAN_BRANCH", raising=False)
-    cfg = json.loads((ROOT / "backend" / "prospect" / "config.json").read_text())
+    cfg = json.loads((ROOT / "backend" / "prospect" / "config.json").read_text(encoding="utf-8"))
     assert cfg["update"]["repo"] and cfg["update"]["branch"]
     assert "backward" in cfg["update"]["_note"].lower()
     assert updater._repo() == (cfg["update"]["repo"], cfg["update"]["branch"])

@@ -171,11 +171,11 @@ def test_resistance_is_stored_but_not_folded_into_the_score():
     """Adding a fifth term without re-deriving the weights would silently move
     every building in the app. The weights stay as they are until Phase 1.4."""
     import json
-    cfg = json.loads((ROOT / "backend" / "prospect" / "config.json").read_text())
+    cfg = json.loads((ROOT / "backend" / "prospect" / "config.json").read_text(encoding="utf-8"))
     assert set(cfg["score_weights"]) == {"age", "scale", "concentration", "absentee"}
     assert sum(cfg["score_weights"].values()) == pytest.approx(1.0)
 
-    src = (ROOT / "scripts" / "prospect" / "build_targets.py").read_text()
+    src = (ROOT / "scripts" / "prospect" / "build_targets.py").read_text(encoding="utf-8")
     total_line = next(l for l in src.splitlines() if l.strip().startswith("total = round("))
     assert "s_resist" not in total_line
 

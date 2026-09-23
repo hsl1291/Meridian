@@ -30,7 +30,7 @@ def test_prospect_scripts_parse(script):
     below, and exists so a genuine syntax error is distinguishable from the
     import breakage."""
     path = ROOT / "scripts" / "prospect" / script
-    compile(path.read_text(), str(path), "exec")
+    compile(path.read_text(encoding="utf-8"), str(path), "exec")
 
 
 @pytest.mark.parametrize("script", SCRIPTS)
@@ -60,7 +60,7 @@ def test_user_facing_script_paths_are_runnable():
     import re
     bad = []
     for f in (ROOT / "scripts").rglob("*.py"):
-        for n, line in enumerate(f.read_text().splitlines(), 1):
+        for n, line in enumerate(f.read_text(encoding="utf-8").splitlines(), 1):
             for m in re.finditer(r"scripts[/\\]{1,2}(\w+\.py)", line):
                 named = ROOT / "scripts" / m.group(1)
                 nested = ROOT / "scripts" / "prospect" / m.group(1)
