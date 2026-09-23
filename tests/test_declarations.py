@@ -7,6 +7,7 @@ findings in the same fields -- and that distinction is the entire screen. The 3d
 DCA ruled against a developer whose Kaufman language was added BY AMENDMENT
 after it held 183 of 192 units.
 """
+import os
 import sys
 from pathlib import Path
 
@@ -207,6 +208,9 @@ def test_a_rebuild_restores_declaration_findings():
 
 # ── shared paths ───────────────────────────────────────────────────────────
 
+@pytest.mark.skipif(os.name == "nt", reason=(
+    "tests the non-Windows branch; on real Windows, faking os.name makes pathlib "
+    "build a PosixPath, which it refuses to instantiate there"))
 def test_the_windows_fallback_is_not_used_off_windows(monkeypatch, tmp_path):
     """Path(r"C:\\Apps\\_shared") is absolute on Windows and RELATIVE everywhere
     else, so an unconfigured POSIX run created that name as a directory in the
