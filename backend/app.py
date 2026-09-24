@@ -1032,7 +1032,7 @@ NON_DISCLOSURE_STATES = {"TX", "KS", "MO", "MT", "NM", "ND", "UT", "WY", "ID", "
 
 # Free statewide parcel services, keyed by 2-letter state. Each config maps that
 # service's field names onto our normalized shape. Verified by downtown point query
-# before wiring (see scripts/statehunt.js). Populated incrementally.
+# before wiring. Populated incrementally.
 STATE_PARCELS: dict[str, dict] = {
     "MA": {
         "url": "https://services1.arcgis.com/hGdibHYSPO59RG1h/arcgis/rest/services/Massachusetts_Property_Tax_Parcels/FeatureServer/0",

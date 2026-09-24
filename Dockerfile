@@ -23,7 +23,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/ backend/
 COPY frontend/ frontend/
 COPY scripts/ scripts/
-COPY run.py .
 # Map layers plus the two datasets the rent and population overlays read.
 RUN python scripts/fetch_layers.py \
  && python scripts/fetch_zori.py \

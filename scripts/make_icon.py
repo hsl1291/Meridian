@@ -1,5 +1,5 @@
 """One-off: render the Meridian mark (the same shape as the inline SVG in
-frontend/index.html) into favicon.ico + icon PNGs for the desktop shortcut.
+frontend/index.html) into favicon.ico, the desktop shortcut's icon.
 
 Run with a Pillow-equipped interpreter, not the app's own venv:
 
@@ -43,10 +43,6 @@ def main() -> None:
     ico = OUT_DIR / "favicon.ico"
     render(256).save(ico, format="ICO", sizes=[(n, n) for n in SIZES])
     print(f"  + {ico}")
-    for n in (256, 192):
-        png = OUT_DIR / f"icon-{n}.png"
-        render(n).save(png, format="PNG")
-        print(f"  + {png}")
 
 
 if __name__ == "__main__":
