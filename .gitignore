@@ -19,3 +19,6 @@ data/declarations/
 data/*.xlsx
 node_modules/
 .DS_Store
+
+# score-calibration backups of config.json (written when weights are adopted)
+backend/prospect/config.*.bak.json

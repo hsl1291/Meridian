@@ -3556,6 +3556,23 @@ def markets():
                          "LIHTC/QCT/DDA, seismic & wildfire hazard.")}
 
 
+# The home market. METRO_ZONING never carried Miami-Dade or Broward, so the
+# live overlay was empty over Miami and a fresh install showed nothing there
+# until fetch_layers.py had been run. These are the SAME county services
+# /api/zoning already queries live and fetch_layers.py downloads from -- the
+# endpoints and field names are proven, not new. Miami-Dade's layer spans every
+# municipality (City of Miami included), so the municipality comes from each
+# polygon's MUNICNAME rather than one fixed label.
+TRICOUNTY_ZONING = [
+    {"muni": "Miami-Dade County", "bbox": (-80.88, 25.13, -80.11, 25.98),
+     "url": f"{MDC_ROOT}/MunicipalZone_gdb/FeatureServer/0",
+     "code": "ZONE", "desc": "ZONEDESC", "muni_field": "MUNICNAME"},
+    {"muni": "Unincorporated Broward", "bbox": (-80.88, 25.95, -80.03, 26.34),
+     "url": f"{BRO_ROOT}/Broward_Municipal_Service_District_Zoning/FeatureServer/2",
+     "code": "ZONING", "desc": "DESCRIPTION", "muni_field": "AREANAME"},
+]
+
+
 def _zoning_candidates(minx, miny, maxx, maxy):
     """Which sources to query for this viewport, metro (hand-wired) ones first.
 
@@ -3567,7 +3584,7 @@ def _zoning_candidates(minx, miny, maxx, maxy):
         x0, y0, x1, y1 = b
         return not (maxx < x0 or minx > x1 or maxy < y0 or miny > y1)
 
-    out = []
+    out = [("metro", cfg) for cfg in TRICOUNTY_ZONING if intersects(cfg["bbox"])]
     for co_no, cfgs in METRO_ZONING.items():
         cb = COUNTY_BBOX.get(co_no)
         if cb is None or intersects(cb):
@@ -3582,17 +3599,20 @@ def _zoning_candidates(minx, miny, maxx, maxy):
     return out[:8]
 
 
-async def _fetch_zoning_source(client, kind, cfg, env, limit):
+async def _fetch_zoning_source(client, kind, cfg, env, limit, offset=None):
     """One upstream zoning query, fully self-contained -- so it can run
     concurrently with the others via asyncio.wait instead of one at a time."""
     code_field, desc_field = cfg["code"], cfg.get("desc")
-    out_fields = [code_field] + ([desc_field] if desc_field else [])
+    muni_field = cfg.get("muni_field")
+    out_fields = [code_field] + [f for f in (desc_field, muni_field) if f]
     params = {
         "geometry": env, "geometryType": "esriGeometryEnvelope", "inSR": "4326",
         "outSR": "4326", "spatialRel": "esriSpatialRelIntersects",
         "outFields": ",".join(out_fields), "returnGeometry": "true",
         "geometryPrecision": "5", "resultRecordCount": str(limit), "f": "geojson",
     }
+    if offset:
+        params["maxAllowableOffset"] = str(offset)
     try:
         r = await client.get(f"{cfg['url']}/query", params=params)
         r.raise_for_status()
@@ -3611,11 +3631,13 @@ async def _fetch_zoning_source(client, kind, cfg, env, limit):
         if skip_rx and re.match(skip_rx, str(code).strip(), re.I):
             continue
         zone = str(code).strip()
+        f_muni = (str(props.get(muni_field)).strip().title()
+                  if muni_field and props.get(muni_field) else muni)
         ft["properties"] = {
             "zone": zone,
             "desc": (str(props.get(desc_field)).strip() if desc_field and props.get(desc_field) else None),
-            "muni": muni,
-            "category": _zone_category(zone, muni),
+            "muni": f_muni,
+            "category": _zone_category(zone, f_muni),
             "max_stories": _zone_stories(zone),
         }
         feats.append(ft)
@@ -3647,7 +3669,10 @@ async def zoning_overlay(bbox: str = Query(...), limit: int = Query(1500, le=400
     env = json.dumps({"xmin": minx, "ymin": miny, "xmax": maxx, "ymax": maxy,
                       "spatialReference": {"wkid": 4326}})
     async with httpx.AsyncClient(timeout=12.0) as client:
-        tasks = [asyncio.ensure_future(_fetch_zoning_source(client, kind, cfg, env, limit))
+        # Simplify to the viewport: ~1/1500 of its width is sub-pixel at any
+        # zoom this layer loads at, and Miami-Dade's county-wide zoning is dense.
+        offset = round(max(maxx - minx, maxy - miny) / 1500.0, 7)
+        tasks = [asyncio.ensure_future(_fetch_zoning_source(client, kind, cfg, env, limit, offset))
                  for kind, cfg in candidates]
         done, pending = await asyncio.wait(tasks, timeout=12.0)
         for t in pending:

@@ -52,7 +52,7 @@
     for (const [id, m] of [['ws-records', 'records'], ['ws-markets', 'markets'], ['ws-reference', 'reference']]) {
       el(id).hidden = next !== m;
     }
-    if (next === 'reference' && !refLoaded) { refLoaded = true; wireUpdates(); }
+    if (next === 'reference' && !refLoaded) { refLoaded = true; wireUpdates(); wireCalibration(); }
 
     // Reparent the live map rather than making a second one.
     const mapEl = el('map');
@@ -534,6 +534,105 @@
     } catch (e) {
       el('update-body').innerHTML = `<div class="note warn">${failMsg('Could not check for updates', e)}</div>`;
     } finally { btn.disabled = false; }
+  }
+
+  // ── score calibration ──────────────────────────────────────────────────
+  const pct = (a) => (a == null ? '—' : (100 * a).toFixed(0) + '%');
+  const aucWord = (a) => (a == null ? '' : a < 0.5 ? 'ranks them backwards'
+    : a <= 0.55 ? 'no better than chance' : a < 0.7 ? 'somewhat better than chance'
+      : 'clearly better than chance');
+
+  function renderCalibration(d) {
+    const r = d.report || {};
+    const fitBtn = el('cal-fit');
+    const lead = `<p class="msg">${fmt(d.terminated_associations)} association(s) in the registry read as
+      terminated or dissolved (status contains ${d.terms_matched.map((t) => `“${esc(t)}”`).join(', ')}).</p>`;
+    if (r.state === 'no_matches') {
+      el('cal-body').innerHTML = lead + '<div class="note">No scored buildings are matched to the registry yet — build the targets first.</div>';
+      fitBtn.hidden = true;
+      return;
+    }
+    if (r.state === 'no_positives') {
+      const rows = (d.labels || []).map((l) => `<tr><td>${esc(l.primary || '—')}</td><td>${esc(l.secondary || '')}</td><td class="num">${fmt(l.n)}</td></tr>`).join('');
+      el('cal-body').innerHTML = lead + `<div class="note warn">${fmt(r.matched)} matched buildings, none labelled terminated.
+        If the registry uses other wording for a terminated association, it is in this list —
+        edit <code>TERMINATED_TERMS</code> in <code>backend/prospect/calibration.py</code>.</div>
+        <table class="mini"><tbody>${rows}</tbody></table>`;
+      fitBtn.hidden = true;
+      return;
+    }
+    const terms = Object.entries(r.terms || {}).map(([t, v]) => `<tr>
+        <td>${esc(t)}</td><td class="num">${pct(v.weight)}</td>
+        <td class="num">${v.auc == null ? '—' : v.auc.toFixed(2)}</td>
+        <td class="dim">${esc(aucWord(v.auc))}</td></tr>`).join('');
+    el('cal-body').innerHTML = lead + `
+      <table class="mini"><tbody>
+        <tr><td class="dim" style="width:170px">Buildings matched</td><td>${fmt(r.matched)} (${fmt(r.positives)} terminated)</td></tr>
+        <tr><td class="dim">AUC of the current score</td><td><b>${r.auc.toFixed(3)}</b> — ${esc(aucWord(r.auc))}</td></tr>
+        <tr><td class="dim">Top 10% of scores catch</td><td>${fmt(r.top_decile_hits)} of ${fmt(r.positives)} (random would catch ~10%)</td></tr>
+        <tr><td class="dim">Median terminated building</td><td>${fmt(r.median_percentile)}th percentile of score</td></tr>
+      </tbody></table>
+      <table class="mini"><thead><tr><th>Term</th><th class="num">Weight</th><th class="num">AUC</th><th></th></tr></thead>
+        <tbody>${terms}</tbody></table>
+      <div id="cal-fit-out">${d.fit ? renderFit(d.fit) : ''}</div>`;
+    fitBtn.hidden = r.positives < d.min_positives;
+    if (r.positives < d.min_positives) {
+      el('cal-msg').textContent = `${r.positives} terminated building(s) is too few to fit weights (needs ${d.min_positives}).`;
+    }
+    el('cal-apply').hidden = !(d.fit && d.fit.verdict === 'adopt');
+  }
+
+  function renderFit(f) {
+    if (f.state === 'too_few') return '<div class="note">Too few terminated buildings to fit weights.</div>';
+    const w = (o) => Object.entries(o).map(([k, v]) => `${esc(k)} ${pct(v)}`).join(' · ');
+    const verdict = {
+      adopt: `<div class="note"><b>These weights hold up out of sample</b> (AUC ${f.current_auc.toFixed(3)} → ${f.loo_auc.toFixed(3)} with each building left out). Worth adopting.</div>`,
+      memorising: `<div class="note warn"><b>Don't adopt these.</b> The fit scores ${f.fitted_auc.toFixed(3)} on the buildings it was fitted to but only ${f.loo_auc.toFixed(3)} with each left out — it is memorising these particular buildings.</div>`,
+      no_gain: `<div class="note">The current weights are as good as anything the fit found once it is scored honestly (${f.loo_auc.toFixed(3)} vs ${f.current_auc.toFixed(3)}). Keep them.</div>`,
+    }[f.verdict] || '';
+    return `<table class="mini"><tbody>
+        <tr><td class="dim" style="width:170px">Current</td><td>${w(f.current)}</td></tr>
+        <tr><td class="dim">Best fit</td><td>${w(f.fitted)}</td></tr>
+      </tbody></table>${verdict}`;
+  }
+
+  async function loadCalibration() {
+    try {
+      renderCalibration(await fetchJSON('/api/calibration', { timeoutMs: 30000 }));
+    } catch (e) {
+      el('cal-body').innerHTML = `<div class="note">${failMsg('Calibration unavailable', e)}</div>`;
+      el('cal-fit').hidden = el('cal-apply').hidden = true;
+    }
+  }
+
+  function wireCalibration() {
+    const fit = el('cal-fit'), apply = el('cal-apply'), msg = el('cal-msg');
+    if (!fit) return;
+    fit.addEventListener('click', async () => {
+      fit.disabled = true; apply.hidden = true;
+      msg.textContent = 'Testing every weighting, leaving each building out in turn — can take a minute…';
+      try {
+        const f = await fetchJSON('/api/calibration/fit', { method: 'POST', timeoutMs: 600000 });
+        el('cal-fit-out').innerHTML = renderFit(f);
+        apply.hidden = f.verdict !== 'adopt';
+        msg.textContent = '';
+      } catch (e) {
+        msg.textContent = `Fit did not finish — ${errReason(e)}`;
+      } finally { fit.disabled = false; }
+    });
+    apply.addEventListener('click', async () => {
+      apply.disabled = true;
+      try {
+        const r = await fetchJSON('/api/calibration/apply', { method: 'POST' });
+        msg.textContent = `Adopted. ${fmt(r.rescored)} buildings rescored; previous config saved as ${r.backup}.`;
+        apply.hidden = true;
+        loadCalibration();
+        if (typeof loadTargets === 'function') loadTargets();
+      } catch (e) {
+        msg.textContent = `Not adopted — ${errReason(e)}`;
+      } finally { apply.disabled = false; }
+    });
+    loadCalibration();
   }
 
   function wireUpdates() {

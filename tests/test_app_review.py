@@ -219,3 +219,49 @@ def test_a_locked_marks_db_explains_itself(monkeypatch):
     r = client.get("/api/marks")
     assert r.status_code == 503
     assert "locked" in r.json()["detail"]
+
+
+# ── live zoning for the home market ─────────────────────────────────────────
+
+def test_the_zoning_overlay_queries_miami_dade_live(monkeypatch):
+    """METRO_ZONING never carried Miami-Dade, so the live overlay was empty over
+    Miami. The county layer spans every municipality; each polygon's own
+    MUNICNAME must come through, and Miami 21 vocabulary must apply to it."""
+    import json
+    seen = []
+
+    def handler(request):
+        url = str(request.url)
+        seen.append(url)
+        if "MunicipalZone_gdb" in url:
+            assert "MUNICNAME" in request.url.params["outFields"]
+            assert float(request.url.params["maxAllowableOffset"]) > 0
+            return httpx.Response(200, json={"type": "FeatureCollection", "features": [
+                {"type": "Feature", "properties": {"ZONE": "T6-48A-O", "ZONEDESC": "Urban Core",
+                                                   "MUNICNAME": "CITY OF MIAMI"},
+                 "geometry": {"type": "Polygon", "coordinates": [[[-80.19, 25.77], [-80.18, 25.77],
+                                                                  [-80.18, 25.78], [-80.19, 25.77]]]}},
+                {"type": "Feature", "properties": {"ZONE": "CS", "ZONEDESC": "Civic Space",
+                                                   "MUNICNAME": "CITY OF MIAMI"},
+                 "geometry": {"type": "Polygon", "coordinates": [[[-80.19, 25.77], [-80.18, 25.77],
+                                                                  [-80.18, 25.78], [-80.19, 25.77]]]}},
+            ]})
+        return httpx.Response(200, json={"type": "FeatureCollection", "features": []})
+    _mock_upstream(monkeypatch, handler)
+    monkeypatch.setattr(app_mod, "CITY_ZONING", [])
+
+    body = client.get("/api/zoning-overlay", params={"bbox": "-80.21,25.76,-80.17,25.79"}).json()
+    assert any("MunicipalZone_gdb" in u for u in seen)
+    by_zone = {f["properties"]["zone"]: f["properties"] for f in body["features"]}
+    assert by_zone["T6-48A-O"]["muni"] == "City Of Miami"
+    assert by_zone["T6-48A-O"]["max_stories"] == 48
+    assert by_zone["CS"]["category"] == "open", "Miami 21 CS is Civic Space, not commercial"
+    json.dumps(body)
+
+
+def test_tricounty_sources_only_where_they_apply():
+    names = lambda b: [c["muni"] for k, c in app_mod._zoning_candidates(*b) if k == "metro"]
+    assert "Miami-Dade County" in names((-80.21, 25.76, -80.17, 25.79))
+    assert "Unincorporated Broward" in names((-80.30, 26.10, -80.25, 26.15))
+    denver = names((-105.0, 39.7, -104.9, 39.8))
+    assert "Miami-Dade County" not in denver and "Unincorporated Broward" not in denver

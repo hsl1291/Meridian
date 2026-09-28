@@ -41,7 +41,9 @@ def test_candidates_are_capped_at_eight_and_metros_come_first():
     real_metro = dict(appmod.METRO_ZONING)
     real_bbox = dict(appmod.COUNTY_BBOX)
     real_city = list(appmod.CITY_ZONING)
+    real_tri = list(appmod.TRICOUNTY_ZONING)
     try:
+        appmod.TRICOUNTY_ZONING[:] = []  # this test fixes the metro count itself
         appmod.COUNTY_BBOX.clear()  # every metro cfg treated as "intersects"
         appmod.METRO_ZONING.clear()
         appmod.METRO_ZONING.update({
@@ -58,6 +60,7 @@ def test_candidates_are_capped_at_eight_and_metros_come_first():
         kinds = [k for k, _ in cands]
         assert kinds == ["metro"] * 6 + ["city"] * 2, kinds
     finally:
+        appmod.TRICOUNTY_ZONING[:] = real_tri
         appmod.METRO_ZONING.clear()
         appmod.METRO_ZONING.update(real_metro)
         appmod.COUNTY_BBOX.clear()

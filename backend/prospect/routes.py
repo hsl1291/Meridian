@@ -44,6 +44,86 @@ def db() -> sqlite3.Connection:
     return connect_query()
 
 
+# ═══ score calibration (Reference tab) ═════════════════════════════════════
+# Whether the screen's score actually ranks the buildings that terminated
+# above the ones that did not, measured against the DBPR registry's own
+# status field. See calibration.py for what this can and cannot say.
+
+_CAL_FIT: dict | None = None   # last fit, so Apply adopts exactly what was shown
+
+
+def _target_fingerprint(con) -> tuple:
+    return tuple(con.execute("SELECT COUNT(*), ROUND(SUM(score), 4) FROM target").fetchone())
+
+
+@router.get("/api/calibration")
+def calibration_status():
+    from . import calibration as cal
+    con = db()
+    con.row_factory = sqlite3.Row
+    try:
+        labels = cal.label_counts(con)
+        rep = cal.report(con, CFG["score_weights"])
+        fit = _CAL_FIT if _CAL_FIT and _CAL_FIT.get("_fp") == _target_fingerprint(con) else None
+    finally:
+        con.close()
+    return {
+        "labels": labels[:15],
+        "terminated_associations": sum(r["n"] for r in labels if r["terminated"]),
+        "terms_matched": list(cal.TERMINATED_TERMS),
+        "report": rep,
+        "fit": {k: v for k, v in fit.items() if not k.startswith("_")} if fit else None,
+        "min_positives": cal.MIN_POSITIVES_TO_FIT,
+    }
+
+
+@router.post("/api/calibration/fit")
+async def calibration_fit():
+    """Search the weight grid with leave-one-out -- CPU-bound and can take a
+    minute on a full roll, so it runs off the event loop."""
+    from . import calibration as cal
+
+    def run():
+        con = db()
+        con.row_factory = sqlite3.Row
+        try:
+            out = cal.suggest(con, CFG["score_weights"])
+            out["_fp"] = _target_fingerprint(con)
+            return out
+        finally:
+            con.close()
+
+    global _CAL_FIT
+    _CAL_FIT = await asyncio.to_thread(run)
+    return {k: v for k, v in _CAL_FIT.items() if not k.startswith("_")}
+
+
+@router.post("/api/calibration/apply")
+def calibration_apply():
+    """Adopt the weights from the last fit -- only if that fit held up out of
+    sample, and only if the targets have not been rebuilt since (a fit against
+    last month's roll is not evidence about this one)."""
+    from . import calibration as cal
+    global _CAL_FIT
+    con = db()
+    try:
+        if not _CAL_FIT or _CAL_FIT.get("_fp") != _target_fingerprint(con):
+            raise HTTPException(409, "Run the fit first -- there is no current fit to apply.")
+        if _CAL_FIT.get("verdict") != "adopt":
+            raise HTTPException(409, "These weights did not hold up out of sample; "
+                                     "the current weights stay.")
+        out = cal.apply(con, HERE / "config.json", _CAL_FIT)
+    finally:
+        con.close()
+    # The running process read config.json at import; bring every copy current
+    # so the table, memos and the next fit all use the new weights now.
+    CFG["score_weights"] = out["applied"]
+    from . import memo as memo_mod
+    memo_mod.CFG["score_weights"] = out["applied"]
+    _CAL_FIT = None
+    return out
+
+
 # ═══ MODULE A — condo termination targets ══════════════════════════════════
 
 @router.get("/api/condo/stats")

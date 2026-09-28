@@ -407,7 +407,22 @@
               value you set stays. Replaced files are backed up to <code>.backup</code> first.</div>
           </section>
 
-          <section class="ref-card">
+<section class="ref-card" id="calibration-card">
+            <h2>Score calibration</h2>
+            <div id="cal-body"><p class="msg">Checking…</p></div>
+            <div class="actions">
+              <button class="ghost-btn" id="cal-fit" hidden>Test better weights</button>
+              <button class="primary-btn solid" id="cal-apply" hidden>Adopt these weights</button>
+              <span class="msg" id="cal-msg"></span>
+            </div>
+            <div class="gl-row" style="margin-top:8px">Checks the takeover score against
+              associations the state registry (DBPR) lists as terminated or dissolved: does
+              the score rank those buildings above the rest? A small labelled set is easy to
+              over-fit, so suggested weights are only offered when they hold up with each
+              building left out in turn. Adopting backs up <code>config.json</code> first.</div>
+          </section>
+
+                    <section class="ref-card">
             <h2>What this covers</h2>
             <table class="ref-table">
               <tr><th>Anywhere in the US</th><td>Flood risk (FEMA), county deed and recorder link, Census tract and building code, HUD fair-market rents, Zillow market rents, transit routes and stops</td></tr>
@@ -592,7 +607,7 @@
 <script src="vendor/maplibre-gl-4.7.1/maplibre-gl.js"></script>
 <script src="zoning3d.js?v=1"></script>
 <script src="charts.js?v=4"></script>
-<script src="app.js?v=81"></script>
-<script src="workspace.js?v=14"></script>
+<script src="app.js?v=82"></script>
+<script src="workspace.js?v=15"></script>
 </body>
 </html>

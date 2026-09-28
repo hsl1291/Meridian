@@ -2252,17 +2252,14 @@ async function refreshMetroZoning() {
     map.getSource('metro_zoning')?.setData(gj);
     if (note) {
       const n = (gj.features || []).length;
-      // Two different reasons for an empty result, and they need different
-      // actions. METRO_ZONING wires eight Florida cities and not Miami-Dade, so
-      // tri-county zoning comes only from the pre-baked GeoJSON that
-      // fetch_layers.py downloads -- which is absent on a fresh install. Saying
-      // "use the layers above" when those layers were never fetched sends the
-      // user to an empty checkbox.
+      // Miami-Dade and unincorporated Broward are live sources now (see
+      // TRICOUNTY_ZONING in app.py), so an empty answer there means the county
+      // service did not respond; elsewhere it means no service is wired.
       note.textContent = n
         ? `${n} zoning polygons in view`
         : (map.querySourceFeatures('mdc_zoning').length
-            ? 'No live zoning service here — the tri-county layers above cover this area.'
-            : 'No zoning for this view. Tri-county zoning is a local layer: run scripts/fetch_layers.py to build it.');
+            ? 'Live zoning returned nothing here — the Miami-Dade layer above still covers this area.'
+            : 'No live zoning service covers this view.');
       note.hidden = false;
     }
   } catch (e) {
