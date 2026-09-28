@@ -14,25 +14,17 @@ What is left is below. None of it blocks using the app.
 
 ## Still open
 
-- **Live zoning for Miami-Dade and the City of Miami.** `METRO_ZONING` wires
-  Orlando, Tampa, Jacksonville, St. Pete, Clearwater, Sarasota, Tallahassee and
-  West Palm Beach, but not the home market -- tri-county zoning comes only from
-  the pre-baked layer `fetch_layers.py` downloads. Wiring the live services needs
-  their URLs verified against the real endpoints, which the build environment
-  could not reach.
-- **Labelled terminations for re-weighting (1.4).** DBPR association status is
-  already in `dbpr_association` and nothing reads it. Run this against your
-  database and the score weights become measurable instead of a judgment call:
+Built since this list was written: live Miami-Dade and Broward zoning in the
+overlay, score calibration in the Reference tab (with leave-one-out-guarded
+adoption), the FS 718.117 homestead floor in the buyout estimate, and Sunbiz
+officer links between LLC owners. What remains needs data this app cannot get
+for free:
 
-  ```sql
-  SELECT primary_status, secondary_status, COUNT(*) n
-  FROM dbpr_association GROUP BY 1, 2 ORDER BY n DESC;
-  ```
-- **What the buyout estimate cannot see.** Mortgages and liens (not on the tax
-  roll) and the statutory homestead payout floor. Every estimate prints both
-  limits.
-- **Beneficial owners through Sunbiz.** Owner clustering uses shared mailing
-  addresses; resolving LLCs to their officers across buildings was deferred.
+- **Mortgages and liens.** Not on the tax roll; the Miami-Dade Clerk's records
+  are not available as a free machine-readable feed. The buyout estimate says so.
+- **Whether owners are current on assessments**, which conditions the homestead
+  purchase-price floor. Association ledgers are private; the estimate assumes
+  current and says so.
 - **Richer server-side charts in the memo and DD report.** Optional -- the
   broken sparkline was fixed; more charts were never needed.
 

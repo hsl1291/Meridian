@@ -21,10 +21,10 @@ number this whole tool is ranked on and a bad cluster fabricates it. So:
   * the evidence for every edge is kept and reported, so a cluster can be
     disbelieved on its specifics rather than on principle
 
-Sunbiz -- Florida's corporate registry, which names officers and registered
-agents -- is the obvious next edge type and plugs in at `EDGE_RULES` without
-touching anything else. It is not wired here because it needs a bulk file this
-codebase does not yet download.
+Rule 3 is Sunbiz -- Florida's corporate registry: two entity owners that share
+an officer or manager who is a PERSON. Registry lookups are cached by
+sunbiz.py and run on demand; clustering only reads the cache, so it stays fast
+and offline. See sunbiz.py for why agents and company officers never link.
 """
 from __future__ import annotations
 
@@ -84,10 +84,11 @@ class _Union:
         return ra != rb
 
 
-def cluster(units: list[dict]) -> dict:
+def cluster(units: list[dict], officers: dict[str, list[dict]] | None = None) -> dict:
     """Group the owners of one building into beneficial owners.
 
     units: [{owner_norm, owner_addr_norm, is_entity}]
+    officers: {owner_norm: [{"name", "title"}]} from the Sunbiz cache, optional
     """
     owners: dict[str, dict] = {}
     for u in units:
@@ -141,6 +142,29 @@ def cluster(units: list[dict]) -> dict:
                 edges.append({"rule": "name_series", "evidence": st,
                               "a": ordered[0], "b": other})
 
+    # Rule 3 — a shared officer or manager (a person) between entity owners.
+    if officers:
+        from .sunbiz import MAX_OWNERS_PER_OFFICER, is_entity, norm_person
+        by_person: dict[str, set] = defaultdict(set)
+        for o, offs in officers.items():
+            if o not in owners or not owners[o]["is_entity"]:
+                continue
+            for off in offs:
+                name = off.get("name") or ""
+                if not name or is_entity(name):
+                    continue      # a company as officer is a manager service, not a buyer
+                p = norm_person(name)
+                if p:
+                    by_person[p].add(o)
+        for person, names in by_person.items():
+            if len(names) < 2 or len(names) > MAX_OWNERS_PER_OFFICER:
+                continue          # a nominee or attorney when it spans too many
+            ordered = sorted(names)
+            for other in ordered[1:]:
+                if uf.union(ordered[0], other):
+                    edges.append({"rule": "sunbiz_officer", "evidence": person,
+                                  "a": ordered[0], "b": other})
+
     groups: dict[str, dict] = {}
     for o, rec in owners.items():
         root = uf.find(o)
@@ -170,10 +194,22 @@ def cluster(units: list[dict]) -> dict:
 
 def top_beneficial(con: sqlite3.Connection, group_key: str) -> dict:
     """Cluster one building straight from the roll, and say what it changed."""
+    from . import sunbiz
     units = [dict(r) for r in con.execute(
-        "SELECT owner_norm, owner_addr_norm, is_entity FROM nal_condo_unit "
+        "SELECT owner_name, owner_norm, owner_addr_norm, is_entity FROM nal_condo_unit "
         "WHERE group_key=?", (group_key,))]
-    res = cluster(units)
+    raw_names = sorted({u["owner_name"] for u in units if u.get("owner_name")})
+    cached = sunbiz.officers_by_name(con, raw_names)
+    officers: dict[str, list[dict]] = {}
+    for u in units:
+        offs = cached.get(sunbiz.norm_entity(u.get("owner_name")))
+        if offs and u.get("owner_norm"):
+            officers.setdefault(u["owner_norm"], [])
+            for off in offs:
+                if off not in officers[u["owner_norm"]]:
+                    officers[u["owner_norm"]].append(off)
+    res = cluster(units, officers)
+    res["sunbiz"] = {"resolved": len(cached), "pending": sunbiz.pending(con, raw_names)}
     top = res["groups"][0] if res["groups"] else None
     # The single-name figure the screen scores on, for comparison.
     single = max((sum(1 for u in units if (u.get("owner_norm") or "") == n)

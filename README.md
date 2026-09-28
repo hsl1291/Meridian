@@ -31,10 +31,47 @@ the **whole filtered set** — not just the current page — pinned on the map o
 the right. Pin size is unit count, colour is screen score. Hovering a row rings
 its pin; clicking either one opens the building.
 
-Inside a building you get ownership concentration, shared mailing addresses (one
-buyer behind several LLCs shows up there before it shows up in any single owner
-name), sales comparables, the redevelopment envelope, and the declaration-review
-form.
+Inside a building you get ownership concentration, the owners clustered into
+beneficial buyers (below), sales comparables, a buyout estimate with the
+statutory homestead floor, the redevelopment envelope, and the
+declaration-review form.
+
+### One buyer behind several LLCs
+
+An assembler who holds each unit in its own entity defeats a single-name
+concentration figure, so owners are clustered on three rules, each shown with
+its evidence: a shared mailing address, an entity name series (FLAGLER HOLDINGS
+I / II), and — on request — a **shared officer in the Sunbiz registry**. The
+drawer's *Check LLC owners in Sunbiz* button looks each entity owner up (about
+two seconds each, cached). Only exact name matches count, only officers who are
+people link owners (registered agents and management companies never do), and
+anyone who appears on more than 12 owners is treated as a nominee, not a buyer.
+A false merge would inflate the number the screen is ranked on, so every rule
+errs toward missing a link.
+
+### Buyout estimate and the homestead floor
+
+Units are priced from in-building single-unit sales per square foot, stepping
+down to the building median, nearby comps, or assessed value scaled by the
+building's own sales, and the drawer says which mix it used. On top of fair
+market value it applies **FS 718.117's floor for homesteaded owners** in an 80%
+termination: at least their original purchase price, plus a 1% relocation
+payment. The purchase price only counts when that deed conveyed the one unit (a
+bulk deed's package price is not anyone's purchase price), and homestead the
+roll could not read is reported as unknown. It cannot see mortgages or liens,
+whether owners are current on assessments, or owner-occupied businesses, and it
+says so. Verify the statute text before relying on the floor in a deal.
+
+### Is the score any good? (Reference → Score calibration)
+
+The state registry lists associations that terminated or dissolved, and every
+scored building is matched to it. The Reference tab shows how well the current
+score ranks those buildings above the rest (AUC; 0.5 is a coin flip), what the
+top 10% of scores catches, and each term on its own. *Test better weights*
+searches every weighting and scores each one with every terminated building left
+out in turn; weights are offered for adoption only when they hold up that way.
+Adopting backs up `config.json` and rescores every building in place. The same
+thing runs from `scripts\prospect\calibrate.py --report | --suggest | --apply`.
 
 ### Why the screen exists
 
@@ -213,7 +250,9 @@ and no API keys.
 
 - **Parcel lines** (zoom 15+)
 - **Flood** — FEMA National Flood Hazard Layer, with a high-risk-only filter
-- **Zoning** — live municipal polygons coloured by use, every wired city
+- **Zoning** — live municipal polygons coloured by use: every Miami-Dade
+  municipality, unincorporated Broward, eight other Florida metros and every
+  harvested city
 - **Rents** — two sources, switchable in place:
   - *Zillow ZORI* by ZIP: the typical market asking rent, plus year-over-year
   - *HUD Fair Market Rent* by FMR area: the 40th-percentile ceiling that voucher
@@ -228,7 +267,9 @@ and no API keys.
 - **Modular plants** — offsite-construction factories across 39 states
 - **Data coverage** — which markets carry which datasets
 
-**South Florida** — pre-baked, colours in immediately: Miami-Dade and Broward
+**South Florida** — pre-baked by `fetch_layers.py`, each downloaded the first
+time you switch it on (only county zoning and the Metro stations load at start):
+Miami-Dade and Broward
 zoning and future land use, city limits, Opportunity Zones, CRA districts,
 brownfields, enterprise zones, historic districts, Rapid Transit Zones,
 Metrorail/Metromover, schools, parks.

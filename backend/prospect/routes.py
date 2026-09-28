@@ -1044,6 +1044,32 @@ def beneficial_owners(group_key: str):
         con.close()
 
 
+@router.post("/api/target/{group_key}/beneficial/sunbiz")
+async def beneficial_sunbiz(group_key: str):
+    """Look this building's entity owners up in the Florida registry (a bounded
+    batch per call; cached), so the clustering can link owners that share an
+    officer. Slow -- two registry requests per entity -- so it runs off the
+    event loop and only when asked."""
+    from . import sunbiz
+
+    def run():
+        con = db()
+        try:
+            if not con.execute("SELECT 1 FROM target WHERE group_key=?", (group_key,)).fetchone():
+                raise HTTPException(404, "no such condo group")
+            names = [r[0] for r in con.execute(
+                "SELECT DISTINCT owner_name FROM nal_condo_unit WHERE group_key=? "
+                "AND owner_name IS NOT NULL", (group_key,))]
+            return sunbiz.resolve(con, names)
+        finally:
+            con.close()
+
+    out = await asyncio.to_thread(run)
+    if out["looked_up"] == 0 and out["unreachable"]:
+        raise HTTPException(502, "Sunbiz (search.sunbiz.org) could not be reached.")
+    return out
+
+
 @router.get("/api/target/{group_key}/history")
 def target_history(group_key: str):
     """Every roll vintage held for this building, oldest first."""

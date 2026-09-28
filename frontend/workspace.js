@@ -831,12 +831,40 @@
     catch (e) { if (detailToken === myToken) box.innerHTML = `<p class="msg">${failMsg('Ownership lookup unavailable', e)}</p>`; return; }
     if (detailToken !== myToken) return;
     const top = b.groups && b.groups[0];
+    // Registry lookups are slow and on demand; offer them while any entity
+    // owner here is still unresolved.
+    const sb = b.sunbiz || {};
+    const sunbizRow = sb.pending
+      ? `<div class="actions"><button class="ghost-btn" id="benef-sunbiz">Check ${fmt(sb.pending)} LLC owner(s) in Sunbiz</button>
+          <span class="msg" id="benef-sunbiz-msg">Links owners that share a manager or officer.</span></div>`
+      : (sb.resolved ? `<div class="note">${fmt(sb.resolved)} entity owner(s) checked against the Sunbiz registry.</div>` : '');
+    const wireSunbiz = () => {
+      const btn = el('benef-sunbiz');
+      if (!btn) return;
+      btn.addEventListener('click', async () => {
+        btn.disabled = true;
+        const msg = el('benef-sunbiz-msg');
+        msg.textContent = 'Looking up each owner in the registry — about 2 seconds per entity…';
+        try {
+          const r = await fetchJSON(`/api/target/${encodeURIComponent(key)}/beneficial/sunbiz`,
+            { method: 'POST', timeoutMs: 600000 });
+          if (detailToken !== myToken) return;
+          msg.textContent = `${fmt(r.found)} of ${fmt(r.looked_up)} found in the registry`
+            + (r.remaining ? ` · ${fmt(r.remaining)} left — run again` : '');
+          loadBeneficial(key);
+        } catch (e) {
+          if (detailToken === myToken) { msg.textContent = `Registry lookup failed — ${errReason(e)}`; btn.disabled = false; }
+        }
+      });
+    };
     if (!top || top.member_count < 2) {
       box.innerHTML = `<div class="note">No owner here holds units under more than one name.
-        The largest single owner is ${pc(b.single_name_top_pct, 1)}.</div>`;
+        The largest single owner is ${pc(b.single_name_top_pct, 1)}.</div>${sunbizRow}`;
+      wireSunbiz();
       return;
     }
-    const rules = { shared_mailing: 'a shared mailing address', name_series: 'a name series' };
+    const rules = { shared_mailing: 'a shared mailing address', name_series: 'a name series',
+      sunbiz_officer: 'a shared officer in the state registry' };
     const seen = [...new Set(top.evidence.map((e) => rules[e.rule] || e.rule))];
     box.innerHTML = `
       <div class="note warn"><b>${pc(top.pct, 1)} under one buyer</b>, across
@@ -850,7 +878,8 @@
         }).join('')}</tbody></table>
       <div class="note">Every link is one rule with its evidence beside it, so a cluster can be
         disbelieved on its specifics. A false merge would inflate the concentration score, which is
-        the number this screen is ranked on.</div>`;
+        the number this screen is ranked on.</div>${sunbizRow}`;
+    wireSunbiz();
   }
 
   // Ownership as one bar: whether a building is already being assembled should
