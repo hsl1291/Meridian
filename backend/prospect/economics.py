@@ -43,6 +43,29 @@ comps. Only single-unit sales set the $/SF, because those are the arm's-length
 signal — a bulk median is what someone already paid to assemble, not what the
 remaining owners will take.
 
+Statutory floor (FS 718.117)
+----------------------------
+In a termination where one owner holds 80% or more of the voting interests
+(the assembler's route), the statute sets three minimums the estimate applies:
+
+  * every owner other than the bulk owner gets at least 100% of fair market
+    value -- which the ladder above already is;
+  * a HOMESTEADED owner who is current on assessments gets at least the
+    original purchase price paid for the unit, when that is higher;
+  * a homesteaded owner also gets a relocation payment of 1% of the proceeds
+    allocated to the unit, paid by the 80% owner.
+
+`cost_statutory` is the FMV total plus those two uplifts, and the holdout
+premium is layered on top of it. The purchase price is the unit's last
+recorded sale -- the current owner's acquisition -- but ONLY where that deed
+conveyed this one unit: a bulk deed stamps its whole package price on every
+folio it covers, and reading that as one owner's purchase price would inflate
+the floor many times over. A homestead flag the roll could not resolve is
+reported as unknown, not as "not homesteaded". Whether an owner is current on
+assessments, and owner-occupied operating businesses (which the statute also
+protects), are not on the roll; the estimate says so. Verify against the
+current statute text before relying on the floor in a deal.
+
 Nothing here is an appraisal. It is a screening estimate whose inputs are all
 visible, and it refuses to produce a figure it cannot source.
 """
@@ -58,6 +81,7 @@ from .memo import _median, building_sales
 # always reports which numbers it used.
 DEFAULT_HOLDOUT_SHARE = 0.10
 DEFAULT_HOLDOUT_PREMIUM = 0.25
+RELOCATION_SHARE = 0.01      # FS 718.117: 1% of proceeds allocated to a homestead unit
 
 BASIS_ORDER = ("comp_psf", "building_median", "nearby_psf", "assessed_ratio", "none")
 
@@ -65,8 +89,9 @@ BASIS_ORDER = ("comp_psf", "building_median", "nearby_psf", "assessed_ratio", "n
 # do not go away because the arithmetic did.
 _STANDARD_LIMITS = (
     "Screening estimate from recorded sales, not an appraisal. It excludes mortgages "
-    "and liens, which the tax roll does not carry, and the statutory payout floor for "
-    "homestead owners under FS 718.117, which needs homestead status on the roll.")
+    "and liens, which the tax roll does not carry. The FS 718.117 homestead floor "
+    "assumes every homesteaded owner is current on assessments, and cannot see "
+    "owner-occupied operating businesses, which the statute also protects.")
 
 
 @dataclass
@@ -77,6 +102,8 @@ class UnitValue:
     value: float | None
     basis: str
     controlled: bool = False
+    homestead: bool | None = None      # None = the roll could not say
+    purchase_price: float | None = None  # last sale, only when it conveyed this unit alone
 
 
 @dataclass
@@ -97,6 +124,11 @@ class Buyout:
     holdout_share: float = DEFAULT_HOLDOUT_SHARE
     holdout_premium: float = DEFAULT_HOLDOUT_PREMIUM
     cost_with_holdout: float | None = None
+    homestead_units: int = 0            # among the units to acquire
+    homestead_unknown: int = 0
+    purchase_price_uplift: float = 0.0  # original-purchase-price floor above FMV
+    relocation_payments: float = 0.0    # 1% of proceeds on homestead units
+    cost_statutory: float | None = None
     caveats: list[str] = field(default_factory=list)
 
     def as_dict(self) -> dict:
@@ -180,9 +212,11 @@ def estimate(group_key: str, con: sqlite3.Connection,
     building_median = summary.get("single_unit_median") or summary.get("last5_median_per_unit")
     b.assessed_ratio = _assessed_ratio(sales, con, group_key)
 
+    cols = {r[1] for r in con.execute("PRAGMA table_info(nal_condo_unit)")}
+    hs_col = "homestead" if "homestead" in cols else "NULL AS homestead"
     units = [dict(r) for r in con.execute(
-        "SELECT folio, owner_norm, owner_addr_norm, tot_lvg_area, jv "
-        "FROM nal_condo_unit WHERE group_key=?", (group_key,))]
+        f"SELECT folio, owner_norm, owner_addr_norm, tot_lvg_area, jv, {hs_col}, "
+        "sale_prc1, or_book1, or_page1 FROM nal_condo_unit WHERE group_key=?", (group_key,))]
     b.units = len(units)
     if not units:
         b.caveats.append("No units on the roll for this folio prefix.")
@@ -201,6 +235,22 @@ def estimate(group_key: str, con: sqlite3.Connection,
     mail_pct, owner_pct = (t["top_mail_pct"] or 0), (t["top_owner_pct"] or 0)
     top_mail = row["owner_addr_norm"] if (row and mail_pct > 0 and mail_pct >= owner_pct) else None
 
+    # A deed that conveyed several units carries the package price on each of
+    # them; only a single-unit deed is one owner's purchase price.
+    deed_units: dict = {}
+    for u in units:
+        if u["or_book1"] and u["or_page1"]:
+            k = (u["or_book1"], u["or_page1"])
+            deed_units[k] = deed_units.get(k, 0) + 1
+
+    def own_purchase(u):
+        if not u["sale_prc1"] or u["sale_prc1"] <= 0:
+            return None
+        k = (u["or_book1"], u["or_page1"])
+        if not (u["or_book1"] and u["or_page1"]) or deed_units.get(k, 0) != 1:
+            return None     # no instrument to check, or a bulk deed
+        return float(u["sale_prc1"])
+
     values: list[UnitValue] = []
     for u in units:
         controlled = bool((top_owner and u["owner_norm"] == top_owner)
@@ -215,7 +265,9 @@ def estimate(group_key: str, con: sqlite3.Connection,
             val, basis = jv * b.assessed_ratio, "assessed_ratio"
         else:
             val, basis = None, "none"
-        values.append(UnitValue(u["folio"], sf, jv, val, basis, controlled))
+        hs = None if u["homestead"] is None else bool(u["homestead"])
+        values.append(UnitValue(u["folio"], sf, jv, val, basis, controlled,
+                                hs, own_purchase(u) if hs else None))
 
     b.controlled_units = sum(1 for v in values if v.controlled)
     b.controlled_by = top_owner if b.controlled_units else None
@@ -241,11 +293,40 @@ def estimate(group_key: str, con: sqlite3.Connection,
     b.median_unit_value = _median([v.value for v in priced])
     b.cost_at_fmv = round(sum(v.value for v in priced), 2)
 
-    # The last units cost more than the first. Applied to the priciest tail,
-    # because a holdout with leverage is usually not the cheapest unit.
+    # FS 718.117 floor for homesteaded owners: at least their purchase price,
+    # plus a 1% relocation payment on what their unit is paid.
+    b.homestead_units = sum(1 for v in to_buy if v.homestead)
+    b.homestead_unknown = sum(1 for v in to_buy if v.homestead is None)
+    payout = {}
+    for v in priced:
+        p = v.value
+        if v.homestead:
+            if v.purchase_price and v.purchase_price > p:
+                b.purchase_price_uplift += v.purchase_price - p
+                p = v.purchase_price
+            b.relocation_payments += p * RELOCATION_SHARE
+        payout[v.folio] = p
+    b.purchase_price_uplift = round(b.purchase_price_uplift, 2)
+    b.relocation_payments = round(b.relocation_payments, 2)
+    b.cost_statutory = round(b.cost_at_fmv + b.purchase_price_uplift + b.relocation_payments, 2)
+
+    # The last units cost more than the first. Applied to the priciest tail of
+    # what each unit must actually be paid, because a holdout with leverage is
+    # usually not the cheapest unit.
     n_hold = max(1, round(len(priced) * holdout_share)) if holdout_share > 0 else 0
-    tail = sorted((v.value for v in priced), reverse=True)[:n_hold]
-    b.cost_with_holdout = round(b.cost_at_fmv + sum(tail) * holdout_premium, 2)
+    tail = sorted(payout.values(), reverse=True)[:n_hold]
+    b.cost_with_holdout = round(b.cost_statutory + sum(tail) * holdout_premium, 2)
+
+    if b.homestead_units:
+        b.caveats.append(
+            f"{b.homestead_units} unit(s) to acquire are homesteaded. FS 718.117 guarantees "
+            f"them at least their original purchase price and a 1% relocation payment: "
+            f"+${b.purchase_price_uplift:,.0f} and +${b.relocation_payments:,.0f} over fair "
+            f"market value here.")
+    if b.homestead_unknown:
+        b.caveats.append(
+            f"Homestead status is unknown for {b.homestead_unknown} unit(s) -- the roll's "
+            f"exemption column could not be read -- so their statutory floor is not included.")
 
     if b.basis_mix.get("assessed_ratio"):
         b.caveats.append(

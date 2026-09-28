@@ -887,19 +887,26 @@
       box.innerHTML = `<div class="note warn">${esc(e.caveats[0] || 'Nothing here could be priced.')}</div>`;
       return;
     }
-    const premium = (e.cost_with_holdout || e.cost_at_fmv) - e.cost_at_fmv;
-    const chart = window.Charts ? Charts.waterfall([
-      { label: `${fmt(e.units_to_acquire)} units to acquire`, value: e.cost_at_fmv, kind: 'add' },
-      { label: `Holdout premium (${Math.round(e.holdout_share * 100)}% at +${Math.round(e.holdout_premium * 100)}%)`,
-        value: premium, kind: 'risk' },
-      { label: 'Total', value: e.cost_with_holdout, kind: 'total' },
-    ], { title: 'Buyout cost' }) : '';
+    // The statutory floor gets its own step: folded into the holdout bar it
+    // would read as negotiating risk when it is a legal minimum.
+    const statutory = e.cost_statutory != null ? e.cost_statutory : e.cost_at_fmv;
+    const floor = statutory - e.cost_at_fmv;
+    const premium = (e.cost_with_holdout || statutory) - statutory;
+    const steps = [{ label: `${fmt(e.units_to_acquire)} units at fair market value`, value: e.cost_at_fmv, kind: 'add' }];
+    if (floor > 0) {
+      steps.push({ label: `Homestead floor, FS 718.117 (${fmt(e.homestead_units)} units)`, value: floor, kind: 'add' });
+    }
+    steps.push({ label: `Holdout premium (${Math.round(e.holdout_share * 100)}% at +${Math.round(e.holdout_premium * 100)}%)`,
+      value: premium, kind: 'risk' });
+    steps.push({ label: 'Total', value: e.cost_with_holdout, kind: 'total' });
+    const chart = window.Charts ? Charts.waterfall(steps, { title: 'Buyout cost' }) : '';
     box.innerHTML = `
       <div class="cells">
         <div><b>${usd(e.cost_with_holdout)}</b><span>Est. buyout</span></div>
         <div><b>${usd(e.median_unit_value)}</b><span>Median unit</span></div>
         <div><b>${fmt(e.controlled_units)}</b><span>Already held</span></div>
         <div><b>${fmt(e.units_to_acquire)}</b><span>To acquire</span></div>
+        <div><b>${e.homestead_units || e.homestead_unknown === 0 ? fmt(e.homestead_units) : '?'}</b><span>Homesteaded</span></div>
       </div>
       ${chart}
       <div class="note">Priced from ${esc(e.basis_summary || 'recorded sales')}.
