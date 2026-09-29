@@ -101,13 +101,59 @@ def _get(url: str, timeout: int = 30) -> bytes:
         return r.read()
 
 
+def _git_head_sha() -> str | None:
+    """HEAD of a git clone, read from .git directly -- this module shells out to
+    nothing, and spawning git.exe from a windowless process flashes a console."""
+    g = APP_ROOT / ".git"
+    try:
+        head = (g / "HEAD").read_text(encoding="utf-8").strip()
+        if not head.startswith("ref:"):
+            return head or None                     # detached HEAD
+        ref = head[4:].strip()
+        loose = g / ref
+        if loose.is_file():
+            return loose.read_text(encoding="utf-8").strip() or None
+        for line in (g / "packed-refs").read_text(encoding="utf-8").splitlines():
+            if line.endswith(" " + ref):
+                return line.split()[0]
+    except OSError:
+        pass
+    return None
+
+
 def installed() -> dict:
     if STAMP.exists():
         try:
             return json.loads(STAMP.read_text(encoding="utf-8"))
         except (ValueError, OSError):
             pass
+    if (APP_ROOT / ".git").exists():
+        sha = _git_head_sha()
+        if sha:
+            return {"sha": sha, "via": "git"}
     return {}
+
+
+def auto_status() -> dict:
+    """Whether this copy updates itself, how, how often, and when it last looked
+    -- so 'is it auto-updating?' is answered on screen, not by reading logs.
+    launch.py owns the behaviour and reads the same config keys."""
+    cfg = _configured()
+    git = (APP_ROOT / ".git").exists()
+    env_off = os.environ.get("MERIDIAN_AUTO_UPDATE") == "0"
+    try:
+        hours = max(0.25, float(cfg.get("check_hours", 1)))
+    except (TypeError, ValueError):
+        hours = 1.0
+    last = None
+    try:
+        stamp = APP_ROOT / (".update-check" if git else ".version")
+        last = datetime.fromtimestamp(stamp.stat().st_mtime).isoformat(timespec="seconds")
+    except OSError:
+        pass
+    return {"enabled": not env_off and cfg.get("auto", True) is not False,
+            "mode": "git" if git else "download", "check_hours": hours,
+            "last_check": last, "off_by_environment": env_off}
 
 
 def check() -> dict:
@@ -173,6 +219,13 @@ def _merge_json(existing: Path, incoming: Path) -> bool:
 
 def apply(dry_run: bool = False) -> dict:
     """Download and swap. Returns what changed, or why nothing did."""
+    if (APP_ROOT / ".git").exists():
+        # Replacing a clone's files from a zip leaves every one showing as a local
+        # change, and the next `git pull` then refuses on the conflicts.
+        return {"ok": False, "error": (
+            "This folder is a git clone, so it updates with git rather than by "
+            "replacing files: run `git pull` here. Automatic updates already do "
+            "that every hour unless update.auto is turned off in config.json.")}
     repo, branch = _repo()
     status = check()
     if not status.get("ok"):

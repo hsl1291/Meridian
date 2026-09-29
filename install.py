@@ -19,8 +19,8 @@ memos and the shared store. Nothing here is overwritten and the old folder is
 not touched; see backend/data_import.py for the rules.
 
 The scheduled task re-invokes launch.py every 15 minutes. Most of those runs
-are a no-op: launch.py only actually reaches GitHub once every 24 hours (see
-UPDATE_CHECK_INTERVAL_HOURS there), and only restarts the server if that check
+are a no-op: launch.py only actually reaches GitHub once an hour by default
+(update.check_hours in config.json), and only restarts the server if that check
 found something to install or the server was down. Without the task, the
 startup shortcut still checks once per sign-in -- --no-task just means a
 machine left running for days goes that many days between checks.
@@ -350,7 +350,7 @@ def install(with_task: bool, import_from: Path | None = None) -> int:
                       "/TR", f'"{PYTHONW}" "{LAUNCH}" --server-only',
                       "/SC", "MINUTE", "/MO", "15", "/F")
         if r.returncode == 0:
-            print(f"  + scheduled task '{TASK_NAME}' (self-heal + daily auto-update check)")
+            print(f"  + scheduled task '{TASK_NAME}' (self-heal + hourly auto-update check)")
         else:
             print(f"  ! could not register the task: {(r.stderr or r.stdout).strip()}")
             print("    The logon shortcut is installed, so the app still starts at sign-in.")

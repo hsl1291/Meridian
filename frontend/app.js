@@ -124,8 +124,42 @@ const BASEMAPS = {
     chip.title = `${d.app} running from ${d.root}`
       + (d.version ? `\nversion ${d.version}` : '\nno version stamp — this copy was downloaded, not updated');
     chip.hidden = false;
+    watchForUpdate(d.pid);
   } catch (e) { /* an older build has no /api/instance, which is itself the answer */ }
 }());
+
+// The app updates itself in the background and restarts its server -- but this
+// page keeps running the scripts it loaded, so without a signal a window left
+// open would show old behaviour indefinitely and it would look as if updates
+// never arrive. A new server process (pid) under the same page means new code is
+// running: say so, and offer the reload. Not an automatic reload -- that could
+// discard a note someone is typing. The view and selection live in the URL hash,
+// so reloading puts them back.
+function watchForUpdate(startPid) {
+  let shown = false;
+  const check = async () => {
+    if (shown || document.hidden) return;
+    try {
+      const r = await fetch('/api/instance', { cache: 'no-store' });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d.pid === startPid) return;
+      shown = true;
+      const bar = document.createElement('div');
+      bar.id = 'update-banner';
+      bar.className = 'update-banner';
+      bar.setAttribute('role', 'status');
+      bar.innerHTML = '<span><b>Meridian was updated.</b> Reload to use the new version.</span>'
+        + '<button type="button" id="update-reload">Reload</button>'
+        + '<button type="button" id="update-later" aria-label="Dismiss">&times;</button>';
+      document.body.appendChild(bar);
+      document.getElementById('update-reload').addEventListener('click', () => location.reload());
+      document.getElementById('update-later').addEventListener('click', () => bar.remove());
+    } catch (e) { /* the server is mid-restart -- try again next time */ }
+  };
+  setInterval(check, 60000);
+  document.addEventListener('visibilitychange', check);
+}
 
 // ---------- hash ----------
 function parseHash() {

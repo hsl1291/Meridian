@@ -361,9 +361,10 @@ an installed app rather than something you run from a console.
 That 15-minute task does two things, both handled by `launch.py`:
 
 - **self-heal** — if the server isn't answering, it's restarted
-- **auto-update** — once every 24 hours (tracked via the `.version` file's own
-  timestamp, so this doesn't need a separate setting), it runs the exact same
-  update `apply()` the manual button uses. If anything changed, it reinstalls
+- **auto-update** — once an hour (one small GitHub API call; tracked by the
+  `.version` file's own timestamp, so this doesn't need a separate setting) it
+  checks whether `main` has moved, and if so runs the exact same update
+  `apply()` the manual button uses. If anything changed, it reinstalls
   dependencies if `requirements.txt` did, then restarts the server so the new
   code actually takes effect — unlike the manual path above, nobody has to
   come back and click restart.
@@ -383,11 +384,20 @@ It then takes over port 8012 from the old copy if that is still running —
 the launcher checks *which folder* is answering (`/api/instance`), not just that
 something is, so the new icon never opens old code.
 
-A **git clone** is never auto-updated (that would overwrite the working tree
-from a zip); `git pull` instead, or set `MERIDIAN_AUTO_UPDATE=1` to opt in.
+**You should never need to download the zip again.** Whatever is merged to
+`main` on GitHub reaches an installed copy within about an hour and a quarter
+(the hourly check, on the 15-minute tick), with no clicks. The server restarts
+itself, and a window left open shows a *Meridian was updated — Reload* bar. The
+Reference tab's **Version** card shows the current commit, the latest one, and
+when it last looked.
 
-What it checks and how often is in `launch.py` (`UPDATE_CHECK_INTERVAL_HOURS`);
-what it did is logged to `logs\update.log`. Without the recurring task
+A **git clone** updates the same way but with `git pull --ff-only`: it refuses
+rather than overwrite local changes, and says why in `logs\update.log`.
+
+In `backend\prospect\config.json`: `update.check_hours` sets how often (never
+faster than every 15 minutes) and `update.auto: false` turns it off
+(`MERIDIAN_AUTO_UPDATE=0` does the same without editing anything). What it did
+is logged to `logs\update.log`. Without the recurring task
 (`--no-task` below), the startup shortcut alone still checks once per sign-in
 — a machine left running for days between reboots just goes that many days
 between checks.

@@ -426,8 +426,8 @@ def instance():
 
 @app.get("/api/update/check")
 def update_check():
-    from .updater import check
-    return check()
+    from .updater import auto_status, check
+    return {**check(), "auto": auto_status()}
 
 
 @app.post("/api/update/apply")
@@ -4467,7 +4467,7 @@ async def area_context(lon: float = Query(...), lat: float = Query(...)):
     out: dict = {"found": True}
     async with httpx.AsyncClient(timeout=15.0) as client:
         # 1. Census geography (free, no key): point -> state/county/tract + place
-        tract = state = county = None
+        state = county = None
         try:
             r = await client.get(
                 "https://geocoding.geo.census.gov/geocoder/geographies/coordinates",
@@ -4476,7 +4476,7 @@ async def area_context(lon: float = Query(...), lat: float = Query(...)):
             r.raise_for_status()
             g = (r.json().get("result") or {}).get("geographies") or {}
             t = (g.get("Census Tracts") or [{}])[0]
-            tract, state, county = t.get("TRACT"), t.get("STATE"), t.get("COUNTY")
+            state, county = t.get("STATE"), t.get("COUNTY")
             place = (g.get("Incorporated Places") or [{}])[0].get("NAME")
             out["geography"] = {"tract_geoid": t.get("GEOID"), "tract": t.get("NAME"),
                                 "place": place, "county_fips": (state or "") + (county or "")}
@@ -4705,4 +4705,19 @@ def shared_building(group_key: str):
 
 # ---------- static frontend ----------
 
-app.mount("/", StaticFiles(directory=str(FRONTEND_DIR), html=True), name="frontend")
+class _RevalidatingStatic(StaticFiles):
+    """Frontend files are revalidated on every load (an ETag makes that a cheap
+    304). Without it a browser applies its own heuristic freshness to
+    app.js/workspace.js, and after an automatic update the window could keep
+    running the OLD scripts against the NEW backend until someone remembered to
+    bump the ?v= on the <script> tag. The pinned map library under /vendor/ is
+    versioned by its path and may be cached."""
+
+    def file_response(self, full_path, stat_result, scope, status_code=200):
+        resp = super().file_response(full_path, stat_result, scope, status_code)
+        if not scope.get("path", "").startswith("/vendor/"):
+            resp.headers["Cache-Control"] = "no-cache"
+        return resp
+
+
+app.mount("/", _RevalidatingStatic(directory=str(FRONTEND_DIR), html=True), name="frontend")

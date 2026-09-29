@@ -14,6 +14,9 @@ running. That is the one behavior this file cannot get wrong without the
 whole feature being invisible.
 """
 import importlib.util
+import json
+import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -169,18 +172,122 @@ def test_main_does_not_restart_when_nothing_changed_and_server_is_healthy(launch
     assert not started
 
 
-# ── a git clone updates with git, not by being overwritten from a zip ──────
+# ── how often, and whether at all ───────────────────────────────────────────
 
-def test_update_is_never_due_in_a_git_checkout(launch, monkeypatch):
+def write_cfg(launch, update):
+    d = launch.ROOT / "backend" / "prospect"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "config.json").write_text(json.dumps({"update": update}), encoding="utf-8")
+
+
+def test_the_default_check_interval_is_an_hour_not_a_day(launch, monkeypatch):
+    """At 24h a change pushed to GitHub could take a day to reach the app, which
+    reads as 'auto-update does not work'."""
+    monkeypatch.delenv("MERIDIAN_AUTO_UPDATE", raising=False)
+    assert launch._check_hours() == 1
+    launch.VERSION_STAMP.write_text("{}", encoding="utf-8")
+    os.utime(launch.VERSION_STAMP, (time.time() - 3500, time.time() - 3500))
+    assert launch._update_due() is False
+    os.utime(launch.VERSION_STAMP, (time.time() - 3700, time.time() - 3700))
+    assert launch._update_due() is True
+
+
+def test_the_interval_is_configurable_with_a_floor(launch):
+    write_cfg(launch, {"check_hours": 6})
+    assert launch._check_hours() == 6
+    write_cfg(launch, {"check_hours": 0.001})
+    assert launch._check_hours() == launch.MIN_CHECK_HOURS, "not faster than the 15-minute tick"
+    write_cfg(launch, {"check_hours": "soon"})
+    assert launch._check_hours() == launch.UPDATE_CHECK_INTERVAL_HOURS
+
+
+def test_auto_update_can_be_switched_off(launch, monkeypatch):
+    monkeypatch.delenv("MERIDIAN_AUTO_UPDATE", raising=False)
+    assert launch._update_due() is True            # no stamp yet
+    write_cfg(launch, {"auto": False})
+    assert launch._update_due() is False
+    write_cfg(launch, {"auto": True})
+    monkeypatch.setenv("MERIDIAN_AUTO_UPDATE", "0")
+    assert launch._update_due() is False, "the environment switch works without editing config"
+
+
+def test_a_missing_or_broken_config_falls_back_to_the_defaults(launch, monkeypatch):
+    monkeypatch.delenv("MERIDIAN_AUTO_UPDATE", raising=False)
+    assert launch._auto_enabled() is True and launch._check_hours() == 1
+    d = launch.ROOT / "backend" / "prospect"
+    d.mkdir(parents=True)
+    (d / "config.json").write_text("{ broken", encoding="utf-8")
+    assert launch._auto_enabled() is True and launch._check_hours() == 1
+
+
+# ── a git clone updates with git pull ───────────────────────────────────────
+
+class FakeGit:
+    """Stands in for the git binary: records calls, answers rev-parse."""
+
+    def __init__(self, heads, pull_rc=0, pull_err=""):
+        self.heads, self.pull_rc, self.pull_err, self.calls = list(heads), pull_rc, pull_err, []
+
+    def __call__(self, *args, timeout=90):
+        self.calls.append(args)
+        if args[0] == "rev-parse":
+            return subprocess.CompletedProcess(args, 0, self.heads.pop(0) + "\n", "")
+        return subprocess.CompletedProcess(args, self.pull_rc, "", self.pull_err)
+
+
+@pytest.fixture
+def clone(launch, monkeypatch):
     monkeypatch.delenv("MERIDIAN_AUTO_UPDATE", raising=False)
     (launch.ROOT / ".git").mkdir()
-    assert launch._update_due() is False
+    monkeypatch.setattr(launch, "GIT_STAMP", launch.ROOT / ".update-check")
+    monkeypatch.setattr(launch.shutil, "which", lambda name: "/usr/bin/git")
+    return launch
 
 
-def test_a_git_checkout_can_opt_back_in(launch, monkeypatch):
-    (launch.ROOT / ".git").mkdir()
-    monkeypatch.setenv("MERIDIAN_AUTO_UPDATE", "1")
-    assert launch._update_due() is True
+def test_a_clone_is_updated_with_a_fast_forward_pull_not_a_zip(clone, monkeypatch):
+    """Overwriting a clone's working tree from a zip would leave every updated
+    file showing as a local change and make the next git pull conflict."""
+    git = FakeGit(["a" * 40, "b" * 40])
+    monkeypatch.setattr(clone, "_git", git)
+    monkeypatch.setattr(clone, "_zip_update", lambda: pytest.fail("a clone must not be zip-updated"))
+    ran = []
+    monkeypatch.setattr(clone.subprocess, "run", lambda *a, **k: ran.append(a) or
+                        subprocess.CompletedProcess(a, 0, "", ""))
+    assert clone.check_for_update() is True
+    assert ("pull", "--ff-only", "--quiet") in git.calls
+    assert clone.GIT_STAMP.exists(), "rate-limited by its own stamp, like a zip copy"
+    assert any("--setup-only" in str(c) for c in ran), "dependencies are refreshed after an update"
+    assert "aaaaaaa -> bbbbbbb" in clone.UPDATE_LOG.read_text(encoding="utf-8")
+
+
+def test_a_clone_that_is_already_current_does_not_restart_anything(clone, monkeypatch):
+    monkeypatch.setattr(clone, "_git", FakeGit(["a" * 40, "a" * 40]))
+    assert clone.check_for_update() is False
+    assert clone._update_due() is False, "and it is not asked again until the interval passes"
+
+
+def test_a_refused_pull_is_logged_and_never_forced(clone, monkeypatch):
+    git = FakeGit(["a" * 40], pull_rc=1, pull_err="error: Your local changes would be overwritten")
+    monkeypatch.setattr(clone, "_git", git)
+    assert clone.check_for_update() is False
+    assert "local changes would be overwritten" in clone.UPDATE_LOG.read_text(encoding="utf-8")
+    assert not any(c[0] in ("reset", "checkout", "stash") for c in git.calls)
+    assert not clone.GIT_STAMP.exists(), "a failed attempt is retried on the next tick"
+
+
+def test_a_clone_without_git_installed_says_so(clone, monkeypatch):
+    monkeypatch.setattr(clone.shutil, "which", lambda name: None)
+    assert clone.check_for_update() is False
+    assert "git is not installed" in clone.UPDATE_LOG.read_text(encoding="utf-8")
+
+
+def test_a_zip_copy_still_uses_the_zip_updater(launch, monkeypatch):
+    monkeypatch.delenv("MERIDIAN_AUTO_UPDATE", raising=False)
+    monkeypatch.setattr(launch, "_git_update", lambda: pytest.fail("no .git here"))
+    called = []
+    monkeypatch.setattr(launch, "_zip_update", lambda: called.append(1) or False)
+    launch.check_for_update()
+    assert called == [1]
 
 
 # ── is_healthy: only THIS folder's server counts ────────────────────────────

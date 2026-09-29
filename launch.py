@@ -7,17 +7,20 @@ process has no console attached — guard prints accordingly (handled below).
 
 --server-only: ensure the server is running but don't open a browser window.
 
-Every invocation checks whether an update from GitHub is due -- at most once
-per UPDATE_CHECK_INTERVAL_HOURS, tracked via .version's own mtime, so this is
-a no-op network-wise on all but roughly one call a day even though the
-"Meridian Server" scheduled task (registered by install.py by default) invokes
-this every 15 minutes. When an update actually applies, the running server is
-restarted so the new code takes effect -- updating the files on disk does
+Every invocation checks whether an update from GitHub is due -- at most once an
+hour by default (config.json `update.check_hours`), tracked by a stamp file's
+mtime, so the "Meridian Server" scheduled task (registered by install.py by
+default, running this every 15 minutes) costs one small API call an hour. A copy
+that came from a zip is updated by downloading `main`; a `git clone` is updated
+with `git pull --ff-only`. Either way, when an update applies the running server
+is restarted so the new code takes effect -- updating the files on disk does
 nothing to a process that already loaded the old ones into memory.
+`update.auto: false` in config.json (or MERIDIAN_AUTO_UPDATE=0) turns it off.
 """
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -61,9 +64,13 @@ UPDATE_LOG = LOG_DIR / "update.log"
 # Written by backend.updater.apply() on every run that reaches GitHub
 # successfully (whether or not anything actually changed), so its mtime is
 # already the right signal for "when did we last check" -- no separate stamp
-# file to keep in sync with it.
+# file to keep in sync with it. A git clone has no such file, so a successful
+# `git pull` touches GIT_STAMP instead.
 VERSION_STAMP = ROOT / ".version"
-UPDATE_CHECK_INTERVAL_HOURS = 24
+GIT_STAMP = ROOT / ".update-check"
+# The default, and the floor is the scheduled task's own 15-minute tick.
+UPDATE_CHECK_INTERVAL_HOURS = 1
+MIN_CHECK_HOURS = 0.25
 
 CREATE_NO_WINDOW = 0x08000000
 # NOT DETACHED_PROCESS: Windows *ignores* CREATE_NO_WINDOW when DETACHED_PROCESS
@@ -175,65 +182,132 @@ def _log_update(msg: str) -> None:
         pass
 
 
+def _update_settings() -> dict:
+    """`update` in config.json, read fresh: editing it takes effect on the next
+    tick with no restart, and a missing or broken file must never stop the
+    launcher, so it degrades to the defaults."""
+    try:
+        cfg = json.loads((ROOT / "backend" / "prospect" / "config.json")
+                         .read_text(encoding="utf-8"))
+        return cfg.get("update") or {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _auto_enabled() -> bool:
+    if os.environ.get("MERIDIAN_AUTO_UPDATE") == "0":
+        return False
+    return _update_settings().get("auto", True) is not False
+
+
+def _check_hours() -> float:
+    try:
+        h = float(_update_settings().get("check_hours", UPDATE_CHECK_INTERVAL_HOURS))
+    except (TypeError, ValueError):
+        h = UPDATE_CHECK_INTERVAL_HOURS
+    return max(MIN_CHECK_HOURS, h)
+
+
 def _is_git_checkout() -> bool:
-    """A clone is updated with git, not by overwriting its working tree from a
-    zip -- that would leave every updated file showing as a local change and
-    silently discard uncommitted edits' context. MERIDIAN_AUTO_UPDATE=1
-    opts a clone back in (the Windows CI job does, to exercise the path)."""
-    return (ROOT / ".git").exists() and os.environ.get("MERIDIAN_AUTO_UPDATE") != "1"
+    return (ROOT / ".git").exists()
+
+
+def _stamp() -> Path:
+    return GIT_STAMP if _is_git_checkout() else VERSION_STAMP
 
 
 def _update_due() -> bool:
-    if _is_git_checkout():
+    if not _auto_enabled():
         return False
     try:
-        age = time.time() - VERSION_STAMP.stat().st_mtime
-        return age >= UPDATE_CHECK_INTERVAL_HOURS * 3600
+        age = time.time() - _stamp().stat().st_mtime
+        return age >= _check_hours() * 3600
     except OSError:
         return True  # no stamp yet -- this copy has never checked
 
 
-def check_for_update() -> bool:
-    """Pull an update from GitHub if one is due, applying it in place via the
-    same backend.updater.apply() the in-app "Check for updates" button and
-    update.bat use. Returns True when files actually changed, which means the
-    running server (if any) is stale and must be restarted for the new code
-    to take effect -- writing new files does nothing to a process that
-    already has the old ones loaded into memory."""
-    if not _update_due():
+def _no_window() -> dict:
+    # creationflags is Windows-only; a bare ValueError from a kwarg irrelevant to
+    # what is being fixed is not the failure anyone auto-updating should see.
+    return {"creationflags": CREATE_NO_WINDOW} if os.name == "nt" else {}
+
+
+def _git(*args: str, timeout: int = 90) -> subprocess.CompletedProcess:
+    # GIT_TERMINAL_PROMPT=0: a credential prompt in a windowless background
+    # process would hang it forever instead of failing.
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    return subprocess.run(["git", "-C", str(ROOT), *args], capture_output=True,
+                          text=True, timeout=timeout, env=env, **_no_window())
+
+
+def _git_update() -> bool:
+    """Update a `git clone` with a fast-forward pull. Fast-forward only: if the
+    clone has local changes that conflict, or has diverged, git refuses and the
+    reason goes to update.log -- it never merges or overwrites anything."""
+    if shutil.which("git") is None:
+        _log_update("git is not installed, so this clone cannot auto-update")
         return False
+    try:
+        before = _git("rev-parse", "HEAD").stdout.strip()
+        pull = _git("pull", "--ff-only", "--quiet")
+        if pull.returncode != 0:
+            _log_update("git pull failed: " + (pull.stderr or pull.stdout or "").strip()[:400])
+            return False
+        after = _git("rev-parse", "HEAD").stdout.strip()
+    except (subprocess.SubprocessError, OSError) as e:
+        _log_update(f"git pull failed: {e}")
+        return False
+    try:
+        GIT_STAMP.write_text(time.strftime("%Y-%m-%dT%H:%M:%S") + "\n", encoding="utf-8")
+    except OSError:
+        pass
+    if after == before:
+        return False
+    _log_update(f"git pull: {before[:7]} -> {after[:7]}")
+    return True
+
+
+def _zip_update() -> bool:
+    """Update a copy that came from a zip, via the same backend.updater.apply()
+    the in-app "Check for updates" button and update.bat use."""
     sys.path.insert(0, str(ROOT))
     try:
         from backend.updater import apply
     except ImportError as e:
         _log_update(f"updater unavailable: {e}")
         return False
-
     r = apply()
     if not r.get("ok"):
         _log_update(f"check failed: {r.get('error')}")
         return False
     if not r.get("updated"):
         return False  # apply() still wrote .version, so this is rate-limited again either way
-
     _log_update(f"applied {r['changed_count']} file(s) from {r.get('from_sha')} "
-               f"to {r.get('to_sha')}" + (", config merged" if r.get("merged") else ""))
+                f"to {r.get('to_sha')}" + (", config merged" if r.get("merged") else ""))
+    return True
+
+
+def check_for_update() -> bool:
+    """Pull an update if one is due. Returns True when files actually changed,
+    which means the running server (if any) is stale and must be restarted for
+    the new code to take effect -- writing new files does nothing to a process
+    that already has the old ones loaded into memory."""
+    if not _update_due():
+        return False
+    updated = _git_update() if _is_git_checkout() else _zip_update()
+    if not updated:
+        return False
 
     # requirements.txt may have changed; reuse start.py's own idempotent
     # installer (it stamps requirements.txt and skips the reinstall when it
-    # hasn't changed) rather than duplicating pip logic here. creationflags is
-    # Windows-only -- this app only ever runs launch.py there, but a bare
-    # ValueError from a kwarg irrelevant to what's being fixed is not the
-    # failure anyone auto-updating should see, so it's conditional rather
-    # than assumed like the rest of this Windows-only file.
-    extra = {"creationflags": CREATE_NO_WINDOW} if os.name == "nt" else {}
+    # hasn't changed) rather than duplicating pip logic here.
     setup = subprocess.run(
         [str(PYTHON), str(ROOT / "start.py"), "--setup-only"],
-        cwd=str(ROOT), capture_output=True, text=True, **extra,
+        cwd=str(ROOT), capture_output=True, text=True, **_no_window(),
     )
     if setup.returncode != 0:
         _log_update("dependency setup after update failed: "
-                   + (setup.stderr or setup.stdout or "").strip()[:400])
+                    + (setup.stderr or setup.stdout or "").strip()[:400])
         # Still restart below -- new code visibly failing to start beats old
         # code silently keeping running with nobody the wiser.
     return True

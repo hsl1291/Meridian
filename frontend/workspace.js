@@ -498,10 +498,27 @@
   // updates the same way a clone does — and nothing shells out to PowerShell.
   let updateStatus = null;
 
+  // Whether this copy updates itself, and when it last looked -- so "is it
+  // auto-updating?" is answered on screen instead of by reading logs.
+  function autoLine(a) {
+    if (!a) return '';
+    if (!a.enabled) {
+      return `<div class="note warn"><b>Automatic updates are off</b> ${a.off_by_environment
+        ? '(MERIDIAN_AUTO_UPDATE=0)' : '(<code>update.auto</code> in config.json)'}.
+        This copy only updates when you press the button below.</div>`;
+    }
+    const hrs = a.check_hours;
+    const every = hrs === 1 ? 'every hour' : hrs < 1 ? `every ${Math.round(hrs * 60)} minutes` : `every ${hrs} hours`;
+    const last = a.last_check ? ` Last checked ${esc(a.last_check.replace('T', ' ').slice(0, 16))}.` : ' It has not checked yet.';
+    const how = a.mode === 'git' ? 'with <code>git pull</code>' : 'from GitHub';
+    return `<div class="note"><b>Updates itself</b> ${every}, ${how}, and restarts when there is something new.${last}
+      If a window is left open, it will say when to reload.</div>`;
+  }
+
   function renderUpdate(d) {
     const box = el('update-body'), apply = el('update-apply');
     if (!d.ok) {
-      box.innerHTML = `<div class="note warn">${esc(d.error || 'Could not check for updates.')}</div>`;
+      box.innerHTML = `<div class="note warn">${esc(d.error || 'Could not check for updates.')}</div>${autoLine(d.auto)}`;
       apply.hidden = true;
       return;
     }
@@ -519,7 +536,8 @@
       ${d.behind ? '<div class="note warn">An update is available.</div>'
         : d.unknown_local ? `<div class="note">This copy has no version stamp, so there is nothing to
             compare. Installing will record one and bring it to the latest.</div>`
-        : '<div class="note">Up to date.</div>'}`;
+        : '<div class="note">Up to date.</div>'}
+      ${autoLine(d.auto)}`;
     apply.hidden = false;
     apply.textContent = d.behind || d.unknown_local ? 'See what would change' : 'Check for changes';
   }
