@@ -40,9 +40,11 @@ def app(tmp_path, monkeypatch):
     (root / "backend" / "prospect").mkdir(parents=True)
     (root / "data").mkdir()
     (root / ".venv").mkdir()
-    (root / "backend" / "app.py").write_text("old code\n", encoding="utf-8")
-    (root / "data" / "prospect.db").write_text("IRREPLACEABLE\n", encoding="utf-8")
-    (root / ".venv" / "marker").write_text("env\n", encoding="utf-8")
+    # Exact bytes, like fake_repo: write_text would make these CRLF on Windows and
+    # the "unchanged file" test compares them to the LF bytes in the fake zip.
+    (root / "backend" / "app.py").write_bytes(b"old code\n")
+    (root / "data" / "prospect.db").write_bytes(b"IRREPLACEABLE\n")
+    (root / ".venv" / "marker").write_bytes(b"env\n")
     (root / "backend" / "prospect" / "config.json").write_text(
         json.dumps({"memo": {"firm": "Harold Holdings"}, "score_weights": {"age": 0.99}}),
         encoding="utf-8")
