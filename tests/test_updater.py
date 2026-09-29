@@ -22,7 +22,9 @@ def fake_repo(tmp_path, files):
     for rel, body in files.items():
         p = src / rel
         p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(body, encoding="utf-8")
+        # Exact bytes: write_text would turn "\n" into "\r\n" on Windows, and
+        # several tests compare line endings.
+        p.write_bytes(body.encode("utf-8"))
     blob = tmp_path / "repo.zip"
     with zipfile.ZipFile(blob, "w") as zf:
         for p in src.rglob("*"):
@@ -246,3 +248,29 @@ def test_a_broken_config_does_not_stop_the_updater(monkeypatch, tmp_path):
     monkeypatch.delenv("MERIDIAN_REPO", raising=False)
     monkeypatch.delenv("MERIDIAN_BRANCH", raising=False)
     assert updater._repo() == (updater.DEFAULT_REPO, updater.DEFAULT_BRANCH)
+
+
+# ── Windows batch files keep their line endings ────────────────────────────
+
+def test_batch_files_stay_crlf_however_github_serves_them(app, monkeypatch):
+    """A downloaded zip's start.bat is CRLF. GitHub serves LF. Copying the LF
+    bytes over would reintroduce the goto-label failure the CRLF fixes."""
+    (app / "start.bat").write_bytes(b"@echo off\r\ngoto :done\r\n:done\r\n")
+    blob = fake_repo(app.parent, {"start.bat": "@echo off\ngoto :done\n:done\n",
+                                  "install.bat": "@echo off\necho hi\n",
+                                  "backend/app.py": "new code\n"})
+    serve(monkeypatch, blob, local="oldsha")
+    r = updater.apply()
+    assert r["ok"]
+    assert "start.bat" not in r["changed"], "identical apart from line endings: not a change"
+    assert (app / "start.bat").read_bytes() == b"@echo off\r\ngoto :done\r\n:done\r\n"
+    fresh = (app / "install.bat").read_bytes()
+    assert fresh == b"@echo off\r\necho hi\r\n", "a new batch file arrives as CRLF"
+    assert b"\r\r" not in fresh, "already-CRLF input must not be doubled"
+
+
+def test_other_files_are_not_touched_by_line_ending_handling(app, monkeypatch):
+    blob = fake_repo(app.parent, {"start.sh": "#!/bin/sh\necho hi\n", "backend/app.py": "new\n"})
+    serve(monkeypatch, blob, local="oldsha")
+    updater.apply()
+    assert (app / "start.sh").read_bytes() == b"#!/bin/sh\necho hi\n"

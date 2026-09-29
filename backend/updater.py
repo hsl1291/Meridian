@@ -49,6 +49,20 @@ MERGED_JSON = {"backend/prospect/config.json"}
 
 USER_AGENT = "Meridian-updater"
 
+# Windows batch files must have CRLF endings: with LF-only endings cmd.exe can
+# fail to find `goto :label` targets. GitHub's zip serves files as stored (LF),
+# so without this an update would quietly turn a working start.bat back into one
+# that can break -- and, because the bytes then differ from the installed copy
+# on every check, rewrite it on every update.
+CRLF_SUFFIXES = {".bat", ".cmd"}
+
+
+def _incoming_bytes(item: Path) -> bytes:
+    data = item.read_bytes()
+    if item.suffix.lower() in CRLF_SUFFIXES:
+        data = data.replace(b"\r\n", b"\n").replace(b"\n", b"\r\n")
+    return data
+
 
 def _configured() -> dict:
     """`update` in config.json. Read fresh each time so editing it takes effect
@@ -214,7 +228,8 @@ def apply(dry_run: bool = False) -> dict:
                 merged.append(rel_posix)
             continue
 
-        if dest.exists() and dest.read_bytes() == item.read_bytes():
+        incoming = _incoming_bytes(item)
+        if dest.exists() and dest.read_bytes() == incoming:
             continue
         changed.append(rel_posix)
         if dry_run:
@@ -224,7 +239,10 @@ def apply(dry_run: bool = False) -> dict:
             b.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(dest, b)
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(item, dest)
+        if item.suffix.lower() in CRLF_SUFFIXES:
+            dest.write_bytes(incoming)
+        else:
+            shutil.copy2(item, dest)
 
     if not dry_run:
         STAMP.write_text(json.dumps({
