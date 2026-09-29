@@ -1,0 +1,4 @@
+# Windows batch files need CRLF: with LF-only endings cmd.exe can fail to find
+# `goto :label` targets. GitHub "Download ZIP" ships files as stored, so pin it here.
+*.bat text eol=crlf
+*.cmd text eol=crlf
