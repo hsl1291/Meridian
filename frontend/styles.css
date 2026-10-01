@@ -346,6 +346,7 @@ body { display: flex; }
   cursor: pointer;
   border-radius: 3px;
   color: var(--text-muted);
+  user-select: none;
 }
 .seg-btn:hover { color: var(--text); }
 .seg-btn.active {

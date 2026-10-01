@@ -84,26 +84,40 @@ const ESRI_VECTOR_ATTR =
 const ESRI_IMAGERY_ATTR =
   'Tiles &copy; Esri &mdash; Esri, Maxar, Earthstar Geographics, and the GIS user community';
 
+// `maxzoom` is the deepest level the service actually has tiles for. Past it
+// Esri does not 404 -- it answers 200 with a grey "Map data not yet available"
+// tile, so nothing errors and the map just goes blank at street level. Declaring
+// the limit makes MapLibre stretch the last real tile instead of asking for
+// tiles that do not exist. The Light Gray canvas stops well short of the map's
+// own zoom ceiling (19), which is why only that basemap was affected.
+// `labelsMaxzoom` is the same limit for the label overlay, which is a separate
+// service with its own depth.
+const MAP_MAX_ZOOM = 19;
 const BASEMAPS = {
   voyager: {
     type: 'raster',
     tiles: [`${ESRI}/World_Street_Map/MapServer/tile/{z}/{y}/{x}`],
     tileSize: 256,
+    maxzoom: 19,
     attribution: ESRI_VECTOR_ATTR,
   },
   satellite: {
     type: 'raster',
     tiles: [`${ESRI}/World_Imagery/MapServer/tile/{z}/{y}/{x}`],
     tileSize: 256,
+    maxzoom: 19,
     attribution: ESRI_IMAGERY_ATTR,
     labels: [`${ESRI}/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}`],
+    labelsMaxzoom: 17,
   },
   light: {
     type: 'raster',
     tiles: [`${ESRI}/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}`],
     tileSize: 256,
+    maxzoom: 15,
     attribution: ESRI_VECTOR_ATTR,
     labels: [`${ESRI}/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}`],
+    labelsMaxzoom: 15,
   },
 };
 
@@ -200,7 +214,7 @@ const map = new maplibregl.Map({
   zoom: initial.zoom || 4.2,
   pitch: initial.pitch ?? 0,
   bearing: initial.bearing ?? 0,
-  maxZoom: 19,
+  maxZoom: MAP_MAX_ZOOM,
 });
 // showCompass:false left no affordance to rotate or tilt at all.
 map.addControl(new maplibregl.NavigationControl({ showCompass: true, visualizePitch: true }), 'top-right');
@@ -253,18 +267,25 @@ map.on('error', (e) => {
 });
 
 let activeBasemap = 'light';
+// Point a raster source at another service. setTiles() reloads from the source's
+// stored options, and has no argument for the zoom limit, so the limit goes into
+// those options first -- otherwise switching from Satellite back to Light would
+// keep Satellite's deeper limit and bring the blank tiles back.
+function retargetRaster(src, tiles, maxzoom) {
+  if (!src || !src.setTiles) return;
+  if (src._options) src._options.maxzoom = maxzoom;
+  src.setTiles(tiles);
+}
 function setBasemap(key) {
   if (!BASEMAPS[key] || key === activeBasemap) return;
   // Swap the basemap tiles in place (no setStyle → custom layers untouched, and it
   // can't crash on a not-yet-loaded style the way getStyle()/setStyle() can).
-  const src = map.getSource('basemap');
-  if (src && src.setTiles) src.setTiles(BASEMAPS[key].tiles);
+  retargetRaster(map.getSource('basemap'), BASEMAPS[key].tiles, BASEMAPS[key].maxzoom);
   // Swap the label overlay to match, and hide it for a basemap that has its own
   // names baked in — two sets of labels on one map is worse than none.
   const labels = BASEMAPS[key].labels;
   if (map.getLayer('basemap-labels')) {
-    const lsrc = map.getSource('basemap-labels');
-    if (labels && lsrc && lsrc.setTiles) lsrc.setTiles(labels);
+    if (labels) retargetRaster(map.getSource('basemap-labels'), labels, BASEMAPS[key].labelsMaxzoom);
     map.setLayoutProperty('basemap-labels', 'visibility', labels ? 'visible' : 'none');
   }
   activeBasemap = key;
@@ -766,6 +787,7 @@ map.on('style.load', () => {
     type: 'raster',
     tiles: BASEMAPS[activeBasemap].labels || BASEMAPS.light.labels,
     tileSize: 256,
+    maxzoom: BASEMAPS[activeBasemap].labels ? BASEMAPS[activeBasemap].labelsMaxzoom : BASEMAPS.light.labelsMaxzoom,
     attribution: ESRI_VECTOR_ATTR,
   });
   map.addLayer({ id: 'basemap-labels', type: 'raster', source: 'basemap-labels',

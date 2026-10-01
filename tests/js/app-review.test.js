@@ -159,3 +159,50 @@ test('the report is branded Meridian, not a retired app name', () => {
 test('basemap buttons only bind the basemap segment', () => {
   assert.match(body('wireBasemapButtons'), /#basemap-seg \.seg-btn/);
 });
+
+// ── basemap zoom limits ────────────────────────────────────────────────────
+
+test('every basemap declares the deepest zoom its tiles exist at', () => {
+  // Esri answers 200 with a grey "Map data not yet available" tile past a
+  // service's last level, so nothing errors; only a declared maxzoom stops it.
+  const c = vm.createContext({});
+  vm.runInContext(
+    `const ESRI = 'x', GLYPHS = 'x', FONT = [], ESRI_VECTOR_ATTR = '', ESRI_IMAGERY_ATTR = '';\n`
+    + APP.slice(APP.indexOf('const MAP_MAX_ZOOM'), APP.indexOf('// ---------- which copy is this'))
+    + '\nthis.B = BASEMAPS; this.MAX = MAP_MAX_ZOOM;', c);
+  for (const [key, b] of Object.entries(c.B)) {
+    assert.ok(b.maxzoom >= 1 && b.maxzoom <= c.MAX, `${key} needs a maxzoom`);
+    if (b.labels) assert.ok(b.labelsMaxzoom >= 1 && b.labelsMaxzoom <= c.MAX, `${key} labels need a maxzoom`);
+  }
+  assert.ok(c.B.light.maxzoom < c.MAX, 'the Light Gray canvas is shallower than the map');
+});
+
+test('switching basemap carries the zoom limit with the tiles', () => {
+  const log = [];
+  const mk = (id) => ({ _options: {}, setTiles(t) { log.push([id, t, this._options.maxzoom]); } });
+  const sources = { basemap: mk('basemap'), 'basemap-labels': mk('labels') };
+  const map = {
+    getSource: (id) => sources[id],
+    getLayer: () => true,
+    setLayoutProperty: () => {},
+  };
+  const document = { querySelectorAll: () => [] };
+  const BASEMAPS = {
+    light: { tiles: ['L'], maxzoom: 15, labels: ['LL'], labelsMaxzoom: 15 },
+    satellite: { tiles: ['S'], maxzoom: 19, labels: ['SL'], labelsMaxzoom: 17 },
+  };
+  const c = run(['retargetRaster', 'setBasemap'], { map, document, BASEMAPS, updateHash() {} },
+    "var activeBasemap = 'light';");
+  c.setBasemap('satellite');
+  c.setBasemap('light');
+  assert.deepEqual(log, [
+    ['basemap', ['S'], 19], ['labels', ['SL'], 17],
+    ['basemap', ['L'], 15], ['labels', ['LL'], 15],
+  ], 'the limit must be set BEFORE setTiles reloads, and reset on the way back');
+});
+
+test('the basemap buttons cannot be text-selected', () => {
+  const css = fs.readFileSync(path.join(__dirname, '../../frontend/styles.css'), 'utf8');
+  const rule = /\.seg-btn \{[^}]*\}/.exec(css)[0];
+  assert.match(rule, /user-select:\s*none/);
+});
