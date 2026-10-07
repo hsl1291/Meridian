@@ -554,9 +554,19 @@ def connect(path: Path = DB_PATH, shared_db: Path = SHARED_DB) -> sqlite3.Connec
     con.execute("PRAGMA journal_mode=WAL")
     con.execute("PRAGMA synchronous=NORMAL")
     con.execute("ATTACH DATABASE ? AS shared", (str(shared_db),))
-    con.executescript(SCHEMA_MAIN)
+    # An older database has the tables but not the newer columns, and the schema
+    # also indexes those columns -- so add the columns first and run it again.
+    try:
+        con.executescript(SCHEMA_MAIN)
+    except sqlite3.OperationalError:
+        _ensure_columns(con)
+        con.executescript(SCHEMA_MAIN)
     if SCHEMA_SHARED:
-        con.executescript(SCHEMA_SHARED)
+        try:
+            con.executescript(SCHEMA_SHARED)
+        except sqlite3.OperationalError:
+            _ensure_columns(con)
+            con.executescript(SCHEMA_SHARED)
     _ensure_columns(con)
     return con
 
