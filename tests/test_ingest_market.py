@@ -112,3 +112,34 @@ def test_an_unambiguous_anchor_still_matches(tmp_path, monkeypatch):
 
     rows = con.execute("SELECT cbsa, zhvi FROM metro_price").fetchall()
     assert [(r["cbsa"], r["zhvi"]) for r in rows] == [("11111", 350000.0)]
+
+
+# ── command line ────────────────────────────────────────────────────────────
+
+class _Parsed(Exception):
+    """Raised by the stand-in for connect(), i.e. argument parsing succeeded."""
+
+
+def _main_with(argv, monkeypatch):
+    mod = _load_ingest_market()
+    monkeypatch.setattr(sys, "argv", ["ingest_market.py", *argv])
+    monkeypatch.setattr(mod, "connect", lambda: (_ for _ in ()).throw(_Parsed()))
+    return mod
+
+
+def test_all_and_no_arguments_get_past_argument_parsing(monkeypatch):
+    """`ingest_market.py --all` -- the exact command the README gives -- died
+    with "invalid choice: []": argparse checks nargs="*"'s empty default
+    against `choices`. Nothing was ever downloaded."""
+    import pytest
+    for argv in (["--all"], [], ["pop", "irs"], ["--refresh", "--all"]):
+        with pytest.raises(_Parsed):
+            _main_with(argv, monkeypatch).main()
+
+
+def test_an_unknown_step_is_still_refused(monkeypatch, capsys):
+    import pytest
+    with pytest.raises(SystemExit) as e:
+        _main_with(["pop", "bogus"], monkeypatch).main()
+    assert e.value.code == 2
+    assert "bogus" in capsys.readouterr().err

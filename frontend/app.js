@@ -450,8 +450,10 @@ async function fetchJSON(url, opts = {}) {
   const r = await fetch(url, { ...init, signal: sig });
   if (!r.ok) {
     let msg = `HTTP ${r.status}`;
+    let state = null;
     try {
       const b = await r.json();
+      if (b && typeof b.state === 'string') state = b.state;
       if (b && b.detail) {
         // FastAPI's 422 detail is a list of {loc, msg}; show "field: problem"
         // rather than a blob of JSON.
@@ -465,6 +467,7 @@ async function fetchJSON(url, opts = {}) {
     } catch (e) { /* non-JSON error body */ }
     const err = new Error(msg);
     err.status = r.status;
+    err.state = state;
     throw err;
   }
   return r.json();
@@ -490,8 +493,12 @@ function errReason(e) {
 }
 
 // "<what> -- <why>", HTML-escaped, for dropping straight into innerHTML.
+// A store that was simply never built gets a link to the card that builds it;
+// the click is handled in workspace.js (data-goto-build).
 function failMsg(what, e) {
-  return esc(`${what} — ${errReason(e)}`);
+  const text = esc(`${what} — ${errReason(e)}`);
+  const unbuilt = e && (e.state === 'shared_store_missing' || e.state === 'table_not_built');
+  return unbuilt ? `${text} <a href="#" data-goto-build>Build the data</a>` : text;
 }
 
 // ---------- owner / connected-party search (FL: Sunbiz + parcels) ----------

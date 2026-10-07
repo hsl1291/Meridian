@@ -363,9 +363,8 @@ def unbuilt_detail(exc: BaseException) -> dict | None:
             "state": "table_not_built",
             "table": table,
             "builder": builder,
-            "detail": (f"`{table}` has not been built yet."
-                       + (f" Run {builder} to build it." if builder else "")
-                       + " See the README's first-run sequence."),
+            "detail": (f"`{table}` has not been built yet. Use Reference > Build data"
+                       + (f" (or run {builder})." if builder else ".")),
         }
     m = _CANNOT_OPEN.search(msg)
     if m:
@@ -374,11 +373,11 @@ def unbuilt_detail(exc: BaseException) -> dict | None:
             "state": "shared_store_missing",
             "path": path,
             "builder": "scripts/prospect/migrate_to_shared.py",
-            "detail": (f"The shared store could not be opened at {path}. The national "
-                       "market tables and the Miami-Dade parcel roll live outside the "
-                       "app folder; set APPS_SHARED_DB to the shared.db file, or "
-                       "APPS_SHARED to the folder holding it. The map itself does not "
-                       "need it."),
+            "detail": (f"The shared data store does not exist yet at {path}. It holds the "
+                       "national market tables and the Miami-Dade parcel roll, which are built "
+                       "from public files rather than shipped with the app: use Reference > "
+                       "Build data. (If you already have a shared.db elsewhere, set "
+                       "APPS_SHARED_DB to it.) The map itself does not need it."),
         }
     return None
 
@@ -397,6 +396,12 @@ try:
 except ImportError:  # when run as a top-level module rather than a package
     from site_screen import router as site_screen_router
 app.include_router(site_screen_router)
+
+try:
+    from .data_build import router as data_build_router
+except ImportError:
+    from data_build import router as data_build_router
+app.include_router(data_build_router)
 
 
 # ── updates ────────────────────────────────────────────────────────────────

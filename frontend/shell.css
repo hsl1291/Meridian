@@ -680,3 +680,13 @@ body {
 }
 .update-banner #update-reload { background: #14b8a6; border-color: #14b8a6; color: #04211d; font-weight: 600; }
 .update-banner #update-later { border: 0; padding: 2px 8px; font-size: 18px; line-height: 1; }
+
+/* Reference > Build data */
+.build-row { padding: 10px 0; border-top: 1px solid var(--border); }
+.build-row:first-child { border-top: 0; }
+.build-head { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.build-log {
+  margin: 6px 0 0; padding: 8px 10px; max-height: 190px; overflow: auto;
+  background: var(--bg-panel); border-radius: var(--radius-sm);
+  font: 11px/1.45 ui-monospace, Consolas, monospace; white-space: pre-wrap; word-break: break-word;
+}

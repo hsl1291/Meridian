@@ -8,7 +8,8 @@ automatically (see the root README). To do it by hand:
 
     .venv\Scripts\python.exe install.py --import-from "C:\path\to\old\Meridian"
 
-**Fresh machine?** Rebuild from public sources:
+**Fresh machine?** Open **Reference → Build data** in the app to build the market
+and condo data. The map layers and rents come from these:
 
     .venv\Scripts\python.exe scripts\fetch_layers.py           map polygon layers
     .venv\Scripts\python.exe scripts\fetch_zori.py             zori_rents.json

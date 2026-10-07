@@ -347,7 +347,11 @@ memos, and `data\_shared\` for the large national tables. Point
 `APPS_SHARED_DB` at an existing `shared.db` if you already have one elsewhere.
 
 The app runs with no data at all — it reports what is missing rather than
-failing. **Reference → Version** and `/api/selftest` list every dataset, whether
+failing. **To build it, open Reference → Build data** and press Build: it runs the
+scripts listed under "Rebuilding the condo screen" below, in order, with progress,
+a Cancel button and — if a download fails — the reason and the log. The map needs
+none of it; the Markets tab needs *National market data* (~5–10 min) and the
+Records tab needs the *Miami-Dade condo screen* (~15–25 min). **Reference → Version** and `/api/selftest` list every dataset, whether
 it resolved, and the script that builds it.
 
 ### Installing it as a standalone app (optional, Windows)
@@ -436,7 +440,7 @@ the other wired cities, so the local dictionary must not leak.
 
 CI runs the same command on every push.
 
-Rebuilding the condo screen from scratch (only needed for a new tax roll):
+Rebuilding the data from scratch by hand (the Build data card runs exactly this; only needed for a new tax roll, or without the app):
 
 ```bat
 venv\Scripts\python.exe scripts\prospect\ingest_dbpr.py         REM   5,456 associations

@@ -357,10 +357,16 @@ ORDER = ["crosswalk", "pop", "irs", "permits", "zhvi", "qcew"]
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("steps", nargs="*", choices=ORDER, help="default: all")
+    # No `choices=` here: with nargs="*" argparse checks the EMPTY default against
+    # it and rejects it ("invalid choice: []"), so `--all`, or no arguments at
+    # all, never got past argument parsing. Checked by hand below instead.
+    ap.add_argument("steps", nargs="*", metavar="step", help=f"any of {', '.join(ORDER)}; default: all")
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--refresh", action="store_true", help="re-download cached files")
     args = ap.parse_args()
+    bad = [x for x in args.steps if x not in ORDER]
+    if bad:
+        ap.error(f"invalid step {bad[0]!r} (choose from {', '.join(ORDER)})")
     steps = args.steps if args.steps and not args.all else ORDER
 
     con = connect()

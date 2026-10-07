@@ -52,7 +52,7 @@
     for (const [id, m] of [['ws-records', 'records'], ['ws-markets', 'markets'], ['ws-reference', 'reference']]) {
       el(id).hidden = next !== m;
     }
-    if (next === 'reference' && !refLoaded) { refLoaded = true; wireUpdates(); wireCalibration(); }
+    if (next === 'reference' && !refLoaded) { refLoaded = true; wireDataBuild(); wireUpdates(); wireCalibration(); }
 
     // Reparent the live map rather than making a second one.
     const mapEl = el('map');
@@ -1465,6 +1465,87 @@
       </div><div class="note"><b>Pay basis:</b> ${esc(j.direct_pay_basis)}.<br>${j.notes.map(esc).join('<br>')}</div>`;
     });
   }
+
+
+  // ── build the data from inside the app ─────────────────────────────────
+  // A fresh install has none of the big tables; they come from public files via
+  // scripts/prospect/. This starts those same scripts and shows how far they got,
+  // so nobody has to open a terminal. Polls only while a job runs.
+  let buildTimer = null;
+
+  function renderBuild(st) {
+    const box = el('build-body');
+    if (!box) return;
+    const job = st.job;
+    const running = !!job && job.state === 'running';
+    const rows = st.groups.map((g) => {
+      const mine = job && job.group === g.id;
+      let state;
+      if (mine && running) {
+        state = `<b>Building…</b> step ${job.step + 1} of ${job.steps.length}: ${esc(job.steps[job.step])}`;
+      } else if (g.built) {
+        state = `<span class="tag cool">built</span> ${fmt(g.rows)} rows`;
+      } else {
+        state = '<span class="tag warm">not built</span>';
+      }
+      const note = mine && !running && job.state === 'failed'
+        ? `<div class="note warn"><b>${esc(job.error || 'Build failed.')}</b> The last lines of the log:
+            <pre class="build-log">${esc((job.tail || []).join('\n'))}</pre>
+            Full log: <code>${esc(job.log)}</code></div>`
+        : mine && !running && job.state === 'cancelled' ? '<div class="note">Cancelled.</div>' : '';
+      return `<div class="build-row">
+        <div class="build-head"><b>${esc(g.title)}</b><span>${state}</span></div>
+        <div class="gl-row">${esc(g.detail)} <span class="dim">(${esc(g.size)})</span></div>
+        ${note}
+        <div class="actions">
+          <button class="${g.built ? 'ghost-btn' : 'primary-btn solid'}" data-build="${esc(g.id)}"
+            ${running ? 'disabled' : ''}>${g.built ? 'Rebuild' : 'Build'}</button>
+          ${mine && running ? '<button class="ghost-btn" data-build-cancel>Cancel</button>' : ''}
+        </div></div>`;
+    }).join('');
+    const tail = running && (job.tail || []).length
+      ? `<pre class="build-log">${esc(job.tail.join('\n'))}</pre>` : '';
+    box.innerHTML = rows + tail;
+  }
+
+  async function refreshBuild() {
+    let st;
+    try { st = await fetchJSON('/api/build'); }
+    catch (e) {
+      if (el('build-body')) el('build-body').innerHTML = `<div class="note warn">${failMsg('Could not check the data', e)}</div>`;
+      return;
+    }
+    renderBuild(st);
+    clearTimeout(buildTimer);
+    if (st.job && st.job.state === 'running') buildTimer = setTimeout(refreshBuild, 2500);
+  }
+
+  function wireDataBuild() {
+    const box = el('build-body');
+    if (!box) return;
+    box.addEventListener('click', async (ev) => {
+      const start = ev.target.closest('[data-build]');
+      const stop = ev.target.closest('[data-build-cancel]');
+      if (!start && !stop) return;
+      try {
+        if (start) await fetchJSON('/api/build/' + start.dataset.build, { method: 'POST' });
+        else await fetchJSON('/api/build-cancel', { method: 'POST' });
+      } catch (e) {
+        box.insertAdjacentHTML('afterbegin', `<div class="note warn">${failMsg('Could not start the build', e)}</div>`);
+        return;
+      }
+      refreshBuild();
+    });
+    refreshBuild();
+  }
+
+  // "Build the data" links that failMsg() puts on unbuilt-store errors.
+  document.addEventListener('click', (ev) => {
+    if (!ev.target.closest('[data-goto-build]')) return;
+    ev.preventDefault();
+    setMode('reference');
+    requestAnimationFrame(() => el('build-card')?.scrollIntoView({ block: 'start' }));
+  });
 
   // ── deep link: #mode=records ──────────────────────────────────────────
   const m = /(?:^|[#&])mode=(records|markets|reference)/.exec(location.hash);
